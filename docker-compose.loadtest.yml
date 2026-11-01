@@ -1,0 +1,35 @@
+# Load-test / failure-demo overlay (D6, A5, A7). Replaces the model provider with the local stub service so the test
+# measures this system, not a provider's rate limits.
+#
+#   cp .env.loadtest.example .env.loadtest
+#   docker compose --env-file .env.loadtest -f docker-compose.yml -f docker-compose.loadtest.yml up --build --scale worker=3
+#
+# The stub endpoint/model values come from the env file (nothing provider-specific is hard-coded in the repo, D4).
+services:
+  llm-stub:
+    build:
+      context: .
+      dockerfile: stub_llm/Dockerfile
+    restart: unless-stopped
+    environment:
+      STUB_LLM_DELAY_S: ${STUB_LLM_DELAY_S}
+      STUB_LLM_JITTER_S: ${STUB_LLM_JITTER_S}
+    ports:
+      - "9000:9000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9000/health', timeout=3)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  worker:
+    environment:
+      LLM_PROVIDER: openai_compatible
+      LLM_BASE_URL: ${LOADTEST_LLM_BASE_URL}
+      LLM_API_KEY: ${LOADTEST_LLM_API_KEY}
+      LLM_MODEL: ${LOADTEST_LLM_MODEL}
+      LLM_PRICE_IN_PER_1K: ${LLM_PRICE_IN_PER_1K}
+      LLM_PRICE_OUT_PER_1K: ${LLM_PRICE_OUT_PER_1K}
+    depends_on:
+      llm-stub:
+        condition: service_healthy
