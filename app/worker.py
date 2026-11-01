@@ -37,5 +37,10 @@ def process_run(run_id: str, fnol: dict) -> str:
                            "escalation_reason": f"Worker error: {type(e).__name__}: {e}"},
                    error=traceback.format_exc()[-2000:])
     STORE.set_json(f"run:{run_id}", run, ttl=RUN_TTL_S)
+    try:   # metrics must never turn a finished run into a failed one
+        from app.metrics import emit_run_metrics
+        emit_run_metrics({"status": run["status"], "steps": run.get("steps"), "result": run.get("result")})
+    except Exception:
+        log.exception("metrics emission failed", extra={"run_id": run_id})
     log.info("run finished", extra={"run_id": run_id, "status": run["status"]})
     return run["status"]

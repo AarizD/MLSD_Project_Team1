@@ -7,3 +7,17 @@ scrape_configs:
     metrics_path: "/metrics"
     static_configs:
       - targets: ["api:8000"]
+
+  # Workers are scaled (--scale worker=N). Docker DNS returns one A record per replica, so Prometheus finds every
+  # one without a hard-coded list. Each worker serves multiprocess-aggregated metrics on 9101 (app/rq_worker.py).
+  - job_name: worker
+    dns_sd_configs:
+      - names: ["worker"]
+        type: A
+        port: 9101
+        refresh_interval: 5s
+
+  # only present when docker-compose.loadtest.yml is layered on; a missing target just shows as down
+  - job_name: llm-stub
+    static_configs:
+      - targets: ["llm-stub:9000"]
