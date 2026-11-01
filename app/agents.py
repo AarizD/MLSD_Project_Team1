@@ -565,32 +565,12 @@ def stub_respond(prompt_id, v):
 GATEWAY = LLMGateway(CFG)
 
 
-FREE_TEXT_FIELDS = ["description", "place_of_loss", "garage_name", "insured_name"]
-INJECTION_RE = re.compile(
-    r"(ignore (all |any )?(previous|prior|above|earlier) (instructions|prompts|rules)|disregard (the |all )?"
-    r"(rules|instructions)|you are now|new instructions|system\s*:|developer mode|act as (an? )?(admin|system)|"
-    r"(output|say|respond with) ['\"]?claim approved|jailbreak)", re.I)
-DETERMINATION_RE = re.compile(
-    r"\b(claim (is |has been )?(approved|rejected|denied|repudiated|settled)|(we|the company) (will|shall) "
-    r"(pay|reimburse|settle)|approve[sd]? (the|this) claim|reject(s|ed)? (the|this) claim|payable amount|"
-    r"pay (the )?full amount)\b", re.I)
-
-
-def check_input(fnol):
-    flags = []
-    for f in FREE_TEXT_FIELDS:
-        if INJECTION_RE.search(str(fnol.get(f) or "")):
-            flags.append(f"prompt_injection:{f}")
-    # toxicity: D plugs a model in here
-    return flags
-
-
-def filter_output(text):
-    """Returns (safe_text, flags)."""
-    if text and DETERMINATION_RE.search(text):
-        return ("[Removed: the draft contained a claim determination the system is not authorised to make.]",
-                ["unauthorised_determination_blocked"])
-    return text, []
+import sys, pathlib
+_root = next((p for p in [pathlib.Path.cwd(), *pathlib.Path.cwd().parents] if (p / "app" / "guardrails.py").exists()), None)
+if _root and str(_root) not in sys.path:
+    sys.path.insert(0, str(_root))
+from app.guardrails import (inspect_input, check_input, filter_output, filter_tree,  # noqa: E402,F401
+                            sanitize_for_prompt, sanitize_fields, MODEL_REACHABLE_FIELDS)
 
 
 def merge_dicts(a, b):
@@ -646,16 +626,20 @@ def degrade(agent, t0, err):
 
 
 def fnol_fields(fnol):
-    return {k: fnol.get(k) for k in sorted(FNOL_READABLE)}
+    return sanitize_fields({k: fnol.get(k) for k in sorted(FNOL_READABLE)})
 
 
 def guard_input(state: RunState):
     t0 = time.perf_counter()
-    flags = check_input(state["fnol"])
-    out = {"guardrail_flags": flags, "steps": [step("guardrail", "check_input", t0, flags=flags)]}
-    if flags:
-        out.update(escalate("Instruction-like text found in a free-text field. It was not passed to any model "
-                            "holding tools; a handler should read the original submission."))
+    verdict = inspect_input(state["fnol"])
+    out = {"guardrail_flags": verdict.flags,
+           "steps": [step("guardrail", "check_input", t0, flags=verdict.flags, findings=verdict.findings)]}
+    if verdict.escalate:   # mild toxicity is flagged for the handler but does NOT stop the claim being triaged
+        kinds = {f["check"] for f in verdict.findings if f["severity"] == "severe"}
+        why = ("Instruction-like text found in a field that reaches the models" if "injection" in kinds
+               else "Threatening language found in the submission")
+        out.update(escalate(why + ". It was not passed to any model holding tools; a handler should read the "
+                                  "original submission."))
     return out
 
 
@@ -664,7 +648,7 @@ def triage_agent(state: RunState):
     try:
         out, meta = GATEWAY.complete(CFG["TRIAGE_PROMPT"], {
             "fields": json.dumps(fnol_fields(fnol), default=str),
-            "fnol_text": fnol.get("description") or "", "_fnol": fnol}, deadline=state["deadline"])
+            "fnol_text": sanitize_for_prompt(fnol.get("description") or ""), "_fnol": fnol}, deadline=state["deadline"])
     except ProviderUnavailable as e:
         return degrade("triage", t0, e)
     s = llm_step("triage", "classify_and_extract", t0, meta, output=out)
@@ -709,7 +693,7 @@ def coverage_agent(state: RunState):
     try:
         out, meta = GATEWAY.complete(CFG["COVERAGE_PROMPT"], {
             "claim_facts": json.dumps(state["triage"]), "fields": json.dumps(fnol_fields(state["fnol"]), default=str),
-            "fnol_text": state["fnol"].get("description") or "",
+            "fnol_text": sanitize_for_prompt(state["fnol"].get("description") or ""),
             "feedback": f"VERIFIER FEEDBACK (attempt {attempt}): {fb}" if fb else "",
             "budget": CFG["MAX_TOOL_CALLS"] - calls, "scratchpad": render_scratchpad(state.get("scratchpad", [])),
             "_scratchpad": state.get("scratchpad", []), "_retrieved": state.get("retrieved", {}),
@@ -890,9 +874,19 @@ def finalize(state: RunState):
     position = None if (degraded or not ans or not state.get("verification", {}).get("passed")) else ans.get("coverage_position")
     position, f1 = filter_output(position)
     route_reason, f2 = filter_output(state.get("route_reason"))
-    flags = f1 + f2
+    source = " ".join(str(state["fnol"].get(f) or "") for f in MODEL_REACHABLE_FIELDS)
+    triage_safe, f3 = filter_tree(state.get("triage") or {}, source_text=source)   # model-written text
+    esc_reason, f4 = filter_output(state.get("escalation_reason"))
+    # The triage summary echoes the claimant's own words. Redact them (informational flag) but only escalate for
+    # determinations or abuse the SYSTEM generated; filter_tree marks verbatim echoes of the input with `_echo`.
+    redacted = ["echoed_input_redacted"] if any(f.endswith("_echo") for f in f3) else []
+    flags = f1 + f2 + f4 + [f for f in f3 if not f.endswith("_echo")]
+    if f3:
+        upd["triage"] = triage_safe
     if flags:
         escalated = True
+        if f4:
+            upd["escalation_reason"] = esc_reason
 
     citations = []
     if position and state.get("verification", {}).get("passed"):
@@ -902,14 +896,16 @@ def finalize(state: RunState):
                               "page": p["page"], "text": p["text"], "support": c.get("support")})
 
     status = "degraded" if degraded else ("escalated" if escalated else "completed")
-    upd.update(status=status, escalated=escalated, guardrail_flags=flags,
+    upd.update(status=status, escalated=escalated, guardrail_flags=flags + redacted,
                route="human_review" if escalated else state.get("route"),
                route_reason=("Escalated to a human claims handler." if escalated else route_reason),
                steps=[step("finalize", "assemble_result", t0, status=status)],
                answer={**ans, "coverage_position": position, "citations_resolved": citations,
                        "candidate_clauses": candidates})
     if flags and not state.get("escalation_reason"):
-        upd["escalation_reason"] = "Output filter blocked a determination the system is not authorised to make."
+        toxic = any("toxic" in f for f in flags)
+        upd["escalation_reason"] = ("Output filter blocked abusive text in a draft response." if toxic else
+                                    "Output filter blocked a determination the system is not authorised to make.")
     return upd
 
 

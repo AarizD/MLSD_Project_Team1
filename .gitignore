@@ -5,3 +5,8 @@ __pycache__/
 *.pyc
 .venv/
 index/
+
+# load-test scratch files
+docs/loadtest_results/*.stop
+docs/loadtest_results/*.starts
+eval/results/trulens.sqlite

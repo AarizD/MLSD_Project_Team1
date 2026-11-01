@@ -64,7 +64,8 @@ services:
       jaeger:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      # the worker's metrics server lives in the same parent process that runs the RQ loop
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9101/metrics', timeout=3)"]
       interval: 10s
       timeout: 3s
       retries: 3
