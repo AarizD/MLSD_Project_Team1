@@ -247,6 +247,7 @@ def aggregate(scores: list[RunScore]) -> dict:
             "hallucination_rate_draft": _rate([s.hallucinated_draft for s in ss]),
             "hallucination_rate_returned": _rate([s.hallucinated_returned for s in ans]),
             "mean_cost_usd": round(sum(s.cost_usd for s in ss) / len(ss), 6) if ss else None,
+            "cost_per_100_runs_usd": round(100 * sum(s.cost_usd for s in ss) / len(ss), 4) if ss else None,
             "mean_latency_ms": round(sum(s.latency_ms for s in ss) / len(ss), 1) if ss else None,
             "mean_llm_calls": round(sum(s.llm_calls for s in ss) / len(ss), 2) if ss else None,
         }

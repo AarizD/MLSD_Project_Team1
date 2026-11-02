@@ -8,12 +8,22 @@ in-flight run to finish (stopping a run mid-flight would hide the slowest ones),
 While it runs it samples CPU per component and the RQ queue depth: those two series are the bottleneck evidence.
 
 Writes docs/loadtest_results/<label>_u<N>.json per step and docs/loadtest_results/<label>_summary.md.
+
+Two ways to observe the system under load (the load itself is identical):
+  default   host processes (API and workers started by hand): samples CPU per process with psutil, queue depth from Redis.
+  --docker  the compose stack: samples `docker stats` per container and reads the queue depth with
+            `docker compose exec redis redis-cli` (the compose file does not publish Redis). This is the mode to use
+            for `docker compose ... up --scale worker=N`; pass the same -f files you started the stack with:
+
+      python scripts/load_steps.py --docker --workers 3 --label w3 \
+          --compose-file docker-compose.yml --compose-file docker-compose.loadtest.yml
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+import re
 import json
 import math
 import os
@@ -87,6 +97,72 @@ class Sampler(threading.Thread):
             self.rows.append(row)
 
 
+# ----------------------------------------------------------------------------- docker mode
+_UNITS = {"b": 1, "kib": 1024, "mib": 1024 ** 2, "gib": 1024 ** 3, "kb": 1000, "mb": 1000 ** 2, "gb": 1000 ** 3}
+_SERVICE_RE = re.compile(r"[-_](api|worker|redis|llm-stub|llm_stub)[-_]\d+$")
+
+
+def parse_mem(text: str) -> float:
+    """'90.5MiB / 3.8GiB' -> MB used."""
+    m = re.match(r"\s*([\d.]+)\s*([a-zA-Z]+)", text or "")
+    return float(m.group(1)) * _UNITS.get(m.group(2).lower(), 1) / 1e6 if m else 0.0
+
+
+def parse_docker_stats(text: str) -> dict[str, dict]:
+    """Parse `docker stats --no-stream --format '{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}'` into per-service totals.
+
+    Returns {'worker': {'cpu': <sum % over replicas>, 'mem_mb': <sum>, 'containers': n}, ...}. Compose names containers
+    <project>-<service>-<index> (v2) or <project>_<service>_<index> (v1). Services we do not track are ignored."""
+    out: dict[str, dict] = {}
+    for line in (text or "").splitlines():
+        parts = line.strip().split("|")
+        if len(parts) < 3:
+            continue
+        m = _SERVICE_RE.search(parts[0])
+        if not m:
+            continue
+        svc = m.group(1).replace("-", "_")
+        cpu = float(parts[1].strip().rstrip("%") or 0)
+        d = out.setdefault(svc, {"cpu": 0.0, "mem_mb": 0.0, "containers": 0})
+        d["cpu"] += cpu
+        d["mem_mb"] += parse_mem(parts[2])
+        d["containers"] += 1
+    return out
+
+
+class DockerSampler(threading.Thread):
+    """Same interface as Sampler (stop_ev, rows) but reads containers instead of host processes."""
+
+    def __init__(self, compose_files: list[str]):
+        super().__init__(daemon=True)
+        self.stop_ev, self.rows = threading.Event(), []
+        self.compose = ["docker", "compose"] + [x for f in compose_files for x in ("-f", f)]
+
+    def _run(self, cmd, timeout=20):
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=ROOT).stdout
+
+    def run(self):
+        while not self.stop_ev.is_set():
+            row = {"t": time.time(), "queue_depth": None, **{n: 0.0 for n in set(COMPONENTS.values())}, "worker_mem_mb": None,
+                   "worker_containers": None}
+            try:
+                stats = parse_docker_stats(self._run(["docker", "stats", "--no-stream", "--format", "{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}"]))
+                for comp, v in stats.items():
+                    if comp in row:
+                        row[comp] = v["cpu"]
+                if "worker" in stats:
+                    row["worker_mem_mb"], row["worker_containers"] = stats["worker"]["mem_mb"], stats["worker"]["containers"]
+            except Exception:
+                pass
+            try:
+                out = self._run(self.compose + ["exec", "-T", "redis", "redis-cli", "llen", "rq:queue:claims"], timeout=10).strip()
+                row["queue_depth"] = int(out) if out.isdigit() else None
+            except Exception:
+                pass
+            self.rows.append(row)
+            self.stop_ev.wait(1.0)          # `docker stats --no-stream` itself takes ~1-2 s, so this is ~one sample / 3 s
+
+
 def pct(xs, q):
     xs = sorted(xs)
     if not xs:
@@ -116,7 +192,7 @@ def run_step(n_users: int, workers: int, a, outdir: Path) -> dict:
            "LOAD_POLL_TIMEOUT_S": str(a.poll_timeout), "LOAD_DESCRIPTION_MIX": a.mix}
     warmup = math.ceil(n_users / workers)
     need = warmup + a.min_runs
-    sampler = Sampler(a.redis_url)
+    sampler = DockerSampler(a.compose_file or ["docker-compose.yml"]) if a.docker else Sampler(a.redis_url)
     sampler.start()
     t_start = time.time()
     proc = subprocess.Popen(
@@ -167,6 +243,9 @@ def run_step(n_users: int, workers: int, a, outdir: Path) -> dict:
         slo_met=bool(lat) and pct(lat, .95) <= SLO_P95_MS and 100 * len(bad) / max(len(counted), 1) < SLO_FAIL_PCT,
         cpu_pct_avg={k: avg(k) for k in ("api", "worker", "llm_stub", "redis", "locust")},
         queue_depth_avg=round(sum(depths) / len(depths), 2) if depths else None, queue_depth_max=max(depths) if depths else None,
+        worker_mem_mb_avg=(round(sum(r["worker_mem_mb"] for r in window if r.get("worker_mem_mb")) / max(1, sum(1 for r in window if r.get("worker_mem_mb"))), 1)
+                           if any(r.get("worker_mem_mb") for r in window) else None),
+        worker_containers_seen=max((r.get("worker_containers") or 0 for r in window), default=0) or None,
         duration_s=round(t_end - t_start, 1),
     )
     (outdir / f"{tag}.json").write_text(json.dumps(res, indent=2))
@@ -194,7 +273,9 @@ def main():
     ap.add_argument("--users", type=int, nargs="+", default=[1, 3, 6, 7, 9, 12, 18])
     ap.add_argument("--label", required=True)
     ap.add_argument("--host", default="http://localhost:8000")
-    ap.add_argument("--redis-url")
+    ap.add_argument("--redis-url", help="host-process mode only: where to read the RQ queue depth")
+    ap.add_argument("--docker", action="store_true", help="observe the compose stack (docker stats + compose exec redis)")
+    ap.add_argument("--compose-file", action="append", help="repeat for each -f you started the stack with")
     ap.add_argument("--min-runs", type=int, default=30)
     ap.add_argument("--poll-timeout", type=float, default=120)
     ap.add_argument("--max-step-s", type=float, default=900)
@@ -209,6 +290,10 @@ def main():
     except Exception as e:
         sys.exit(f"preflight failed: {a.host}/health is not answering ({e}). Start the stack first.")
     results = [run_step(n, a.workers, a, outdir) for n in a.users]
+    seen = {r.get("worker_containers_seen") for r in results} - {None}
+    if seen and seen != {a.workers}:
+        print(f"WARNING: --workers {a.workers} but {sorted(seen)} worker container(s) were running; the warm-up exclusion and "
+              f"the predicted p95 column assume --workers.", flush=True)
     md = summary_md(a.label, results)
     (outdir / f"{a.label}_summary.md").write_text(md)
     print("\n" + md)

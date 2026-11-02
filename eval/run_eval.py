@@ -12,13 +12,14 @@
 
     python eval/run_eval.py compare eval/results/before.json eval/results/after.json
 
-Provider: whatever the environment configures (LLM_PROVIDER=stub by default, so it runs offline and in CI). With a real
-provider set LLM_PROVIDER/LLM_BASE_URL/LLM_API_KEY/LLM_MODEL and the price variables, exactly as for the service.
+Provider: whatever .env / the environment configures, exactly as for the service (the default is LLM_PROVIDER=stub, which
+runs offline and in CI but measures only the scripted stub). For real results set LLM_PROVIDER, LLM_BASE_URL, LLM_API_KEY,
+LLM_MODEL and the price variables in .env. The provider used is printed and stored in the results.
 
-TruLens: every scenario run is recorded as a TruLens record in eval/results/trulens.sqlite and the four metrics are
-registered as custom feedback functions (see eval/metrics.py for the definitions), so `trulens` leaderboards and the
-dashboard work on them. Pass --no-trulens to skip; the JSON/markdown results are produced either way and are
-computed by the same functions.
+TruLens: every scenario run is stored as a TruLens record in eval/results/trulens.sqlite (with the scores from
+eval/metrics.py in the output), so runs can be browsed in the TruLens dashboard per --label. TruLens is the record store;
+it does not compute the metrics (see TruRecorder). Pass --no-trulens to skip; the JSON/markdown results are produced
+either way.
 """
 
 from __future__ import annotations
@@ -40,7 +41,7 @@ sys.path.insert(0, str(ROOT / "eval"))
 METRIC_KEYS = ["context_relevance", "context_recall", "groundedness", "faithfulness",
                "hallucination_rate_draft", "hallucination_rate_returned"]
 OUTCOME_KEYS = ["outcome_accuracy", "answer_rate", "escalation_precision", "escalation_recall", "support_hit_rate",
-                "mean_cost_usd", "mean_latency_ms", "mean_llm_calls"]
+                "mean_cost_usd", "cost_per_100_runs_usd", "mean_latency_ms", "mean_llm_calls"]
 
 
 def build_fnol(base: dict, case: dict) -> dict:
@@ -63,78 +64,68 @@ def apply_overrides(pairs: list[str]) -> dict:
 
 
 def load_agents():
+    # NOTE: do not default LLM_PROVIDER here. app.agents loads .env itself and python-dotenv never overrides variables that are
+    # already set, so a default here would silently force the stub even when .env configures your real provider.
     os.environ.setdefault("RUNS_DIR", tempfile.mkdtemp(prefix="eval_runs_"))
-    os.environ.setdefault("LLM_PROVIDER", "stub")
     from app import agents
     return agents
 
 
 # --------------------------------------------------------------------------- TruLens (optional)
 class TruRecorder:
-    """Wraps each run as a TruLens record and attaches the custom metric feedbacks. Never allowed to break the eval."""
+    """Stores every scenario run in TruLens (inputs, outputs, and OUR computed scores) so runs can be browsed in the
+    TruLens dashboard and compared across app versions (`--label`).
 
-    def __init__(self, label: str, db_path: Path, scorer):
-        self.ok, self.err = False, None
+    What TruLens does here, and what it does not: it is the RECORD STORE. The four metrics are computed by
+    eval/metrics.py and written into each record's output; they are not TruLens feedback functions. (TruLens 2.x runs
+    in OpenTelemetry mode, where the old Feedback/deferred-evaluator API is not supported; attaching metrics natively
+    needs its newer Metric/Run API and was not done.) Failures here never break the evaluation."""
+
+    def __init__(self, label: str, db_path: Path):
+        self.ok, self.err, self.n = False, None, 0
         try:
             from trulens.apps.app import TruApp, instrument
-            from trulens.core import Feedback, TruSession
+            from trulens.core import TruSession
             self.db_path = str(db_path)
-            self.counts = {}
             self.session = TruSession(database_url=f"sqlite:///{db_path}")
 
             class ClaimApp:
-                def __init__(self, fn):
-                    self.fn = fn
+                def __init__(self):
+                    self.payload = ""
 
                 @instrument
                 def run(self, case_json: str) -> str:
-                    return self.fn(case_json)
+                    return self.payload
 
-            def feedback(name):
-                def fn(inp: str, out: str):
-                    v = scorer(name, inp, out)
-                    return float(v) if v is not None else float("nan")
-                fn.__name__ = name
-                return Feedback(fn, name=name).on_input().on_output()
-
-            names = ["groundedness", "context_relevance", "faithfulness", "hallucination_returned"]
-            self.app = ClaimApp(self._call)
-            self.tru = TruApp(self.app, app_name="motor-claim-triage", app_version=label,
-                              feedbacks=[feedback(n) for n in names])
-            self._payload = None
+            self.app = ClaimApp()
+            self.tru = TruApp(self.app, app_name="motor-claim-triage", app_version=label)
             self.ok = True
         except Exception as e:                       # TruLens missing or API drift: keep evaluating
             self.err = f"{type(e).__name__}: {e}"
 
-    def _call(self, case_json: str) -> str:
-        return self._payload
-
     def record(self, case_json: str, output_json: str):
         if not self.ok:
             return
-        self._payload = output_json
-        with self.tru:
-            self.app.run(case_json)
+        try:
+            self.app.payload = output_json
+            with self.tru:
+                self.app.run(case_json)
+            self.n += 1
+        except Exception as e:
+            self.err = f"record failed: {type(e).__name__}: {e}"
 
     def finish(self):
-        """Verify what actually landed in the TruLens database. 'Constructed without error' is not 'recorded'."""
+        """Verify what actually landed in the database. 'Constructed without error' is not 'recorded'."""
         if not self.ok:
             return
         try:
-            self.session.wait_for_feedback_results(timeout=120)
-        except Exception as e:
-            self.err = f"feedback wait: {e}"
-        try:
+            self.session.force_flush()
             import sqlite3
-            con = sqlite3.connect(self.db_path)
-            n = lambda t: con.execute(f"select count(*) from {t}").fetchone()[0]
-            self.counts = {t: n(t) for t in ("trulens_records", "trulens_events", "trulens_feedbacks")}
-            if not any(self.counts.values()):
-                self.ok = False
-                self.err = (f"TruLens registered {n('trulens_feedback_defs')} feedback definitions but persisted no records or "
-                            f"feedback results ({self.counts}); wiring incomplete. Metrics below come from eval/metrics.py.")
+            stored = sqlite3.connect(self.db_path).execute("select count(*) from trulens_events").fetchone()[0]
+            if stored < self.n:
+                self.ok, self.err = False, f"TruLens stored {stored} events for {self.n} runs"
         except Exception as e:
-            self.err = f"could not verify TruLens database: {e}"
+            self.ok, self.err = False, f"could not verify TruLens database: {e}"
 
 
 def cmd_run(a):
@@ -150,18 +141,9 @@ def cmd_run(a):
     ptext = lambda cid: (agents.get_clause(cid) or {}).get("text")
     ptype = lambda cid: (agents.get_clause(cid) or {}).get("section_type")
 
-    def scorer(name, inp, out):
-        try:
-            case, record = json.loads(inp), json.loads(out)
-            s = M.score_run(case, record, ptext, ptype)
-            return {"groundedness": s.groundedness, "context_relevance": s.context_relevance, "faithfulness": s.faithfulness,
-                    "hallucination_returned": None if s.hallucinated_returned is None else float(s.hallucinated_returned)}[name]
-        except Exception:
-            return None
-
     outdir = Path(a.out)
     outdir.mkdir(parents=True, exist_ok=True)
-    tru = None if a.no_trulens else TruRecorder(a.label, outdir / "trulens.sqlite", scorer)
+    tru = None if a.no_trulens else TruRecorder(a.label, outdir / "trulens.sqlite")
     t0 = time.time()
     scores, per_case = [], []
     for case in cases:
@@ -174,13 +156,17 @@ def cmd_run(a):
         scores.append(sc)
         per_case.append({**asdict(sc), "title": case["title"], "claim_text": case["fnol"]["description"][:140]})
         if tru and tru.ok:
-            tru.record(json.dumps(case), json.dumps(record, default=str))
+            tru.record(json.dumps(case), json.dumps({"scores": asdict(sc), "status": record["status"],
+                                                      "result": record["result"]}, default=str))
         print(f"{'PASS' if sc.outcome_ok else 'FAIL'} {case['id']} [{case['tier']}] {case['title'][:58]:58s} "
               f"{sc.status}/{sc.route}" + ("" if sc.outcome_ok else "  <- " + "; ".join(sc.failures)), flush=True)
     if tru:
         tru.finish()
 
     cfg = agents.CFG
+    if cfg["LLM_PROVIDER"] == "stub":
+        print("\n*** LLM_PROVIDER=stub: these numbers measure the harness and the scripted stub, NOT a model. "
+              "Set your provider in .env for real results. ***\n")
     result = {
         "label": a.label, "ran_at": dt.datetime.now(dt.timezone.utc).isoformat(), "seconds": round(time.time() - t0, 1),
         "scenarios_file": a.scenarios, "n_scenarios": len(cases), "overrides": overrides,
@@ -193,10 +179,8 @@ def cmd_run(a):
     (outdir / f"{a.label}.md").write_text(render_run(result))
     print("\n" + render_run(result))
     if tru and tru.ok:
-        try:
-            print(tru.session.get_leaderboard().to_string())
-        except Exception:
-            pass
+        print(f"[TruLens: {tru.n} runs stored in {outdir / 'trulens.sqlite'}; browse with: python -c \"from trulens.dashboard import run_dashboard; "
+              f"from trulens.core import TruSession; run_dashboard(TruSession(database_url='sqlite:///{outdir / 'trulens.sqlite'}'))\"]")
     elif tru:
         print(f"[trulens unavailable: {tru.err}]")
 

@@ -1,0 +1,4 @@
+# Run on the HOST: batch evaluation (eval/run_eval.py). The agent dependencies are needed too:
+#   pip install -r requirements-app.txt -r requirements-eval.txt
+trulens>=2.0
+# eval uses the same model settings as the service (.env): LLM_PROVIDER, LLM_BASE_URL, LLM_API_KEY, LLM_MODEL, prices

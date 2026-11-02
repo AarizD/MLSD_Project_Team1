@@ -45,6 +45,7 @@ CFG = dict(
     # circuit breaker
     CB_FAILURE_THRESHOLD=env("CB_FAILURE_THRESHOLD", 3, int),
     CB_RESET_S=env("CB_RESET_S", 30.0, float),
+    CB_BACKEND=env("CB_BACKEND", "auto"),   # auto = shared (Redis) when STORE_BACKEND=redis, else in-process
     # loop bounds (A1)
     MAX_COVERAGE_TURNS=env("MAX_COVERAGE_TURNS", 12, int),
     MAX_TOOL_CALLS=env("MAX_TOOL_CALLS", 8, int),
@@ -358,6 +359,76 @@ class CircuitBreaker:
         self.state, self.failures = "closed", 0
 
 
+class SharedCircuitBreaker(CircuitBreaker):
+    """Breaker state in Redis, so every worker process and every forked job sees the same circuit.
+
+    RQ forks a child per job and discards it afterwards, so an in-memory breaker forgets its failures at the end of
+    every job: each job would then spend its whole retry/timeout budget on a provider that is already known to be
+    down. Sharing the state is what lets the circuit actually protect the provider and fail fast. If Redis cannot be
+    reached it falls back to the local in-memory behaviour; it never blocks a run."""
+
+    KEY = "cb:llm"
+
+    def __init__(self, threshold, reset_s, client):
+        super().__init__(threshold, reset_s)
+        self.r = client
+
+    def _load(self):
+        try:
+            h = self.r.hgetall(self.KEY)
+        except Exception:
+            return
+        if h:
+            self.state = h.get("state", "closed")
+            self.failures = int(h.get("failures", 0))
+            self.opened_at = float(h.get("opened_at", 0))
+        else:
+            self.state, self.failures, self.opened_at = "closed", 0, 0.0
+
+    def _save(self):
+        try:
+            self.r.hset(self.KEY, mapping={"state": self.state, "failures": self.failures, "opened_at": self.opened_at})
+            self.r.expire(self.KEY, 3600)
+        except Exception:
+            pass
+
+    def allow(self):
+        self._load()
+        before = self.state
+        ok = super().allow()
+        if self.state != before:
+            self._save()
+        return ok
+
+    def record_success(self):
+        changed = self.state != "closed" or self.failures
+        super().record_success()
+        if changed:
+            self._save()
+
+    def record_failure(self):
+        self._load()
+        super().record_failure()
+        self._save()
+
+    def reset(self):
+        super().reset()
+        self._save()
+
+
+def make_breaker(cfg):
+    backend = cfg.get("CB_BACKEND", "auto")
+    if backend == "redis" or (backend == "auto" and os.getenv("STORE_BACKEND") == "redis"):
+        try:
+            import redis
+            client = redis.Redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True,
+                                          socket_timeout=1, socket_connect_timeout=1)
+            return SharedCircuitBreaker(cfg["CB_FAILURE_THRESHOLD"], cfg["CB_RESET_S"], client)
+        except Exception:
+            pass
+    return CircuitBreaker(cfg["CB_FAILURE_THRESHOLD"], cfg["CB_RESET_S"])
+
+
 def parse_json_obj(text):
     """Extract the first JSON object from model output."""
     if not text:
@@ -378,7 +449,7 @@ def parse_json_obj(text):
 class LLMGateway:
     def __init__(self, cfg):
         self.cfg = cfg
-        self.breaker = CircuitBreaker(cfg["CB_FAILURE_THRESHOLD"], cfg["CB_RESET_S"])
+        self.breaker = make_breaker(cfg)
         self.fault = None
         self._http = httpx.Client()
 
