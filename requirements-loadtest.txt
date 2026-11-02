@@ -1,0 +1,5 @@
+# Run on the HOST (not in a container): load test, demo and report scripts.
+#   pip install -r requirements-loadtest.txt
+locust>=2.30
+psutil>=5.9
+httpx>=0.27

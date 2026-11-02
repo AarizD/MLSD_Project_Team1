@@ -10,3 +10,5 @@ index/
 docs/loadtest_results/*.stop
 docs/loadtest_results/*.starts
 eval/results/trulens.sqlite
+runs_export/
+incident-*

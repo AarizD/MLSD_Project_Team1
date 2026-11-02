@@ -1,8 +1,8 @@
 # Guardrails (L4)
 
 Code: `app/guardrails.py`. Wired into the graph from `notebooks/person_c_agents.ipynb` (so `app/agents.py` regenerates
-cleanly with `python scripts/export_agents.py`). Tests: `tests/test_guardrails.py` (56 unit cases),
-`tests/test_guardrails_pipeline.py` (7 end-to-end cases through the real LangGraph pipeline).
+cleanly with `python scripts/export_agents.py`). Tests: `tests/test_guardrails.py` (unit cases: attacks, benign text, output filter),
+`tests/test_guardrails_pipeline.py` (end-to-end cases through the real LangGraph pipeline). Run `python -m pytest tests -q`.
 
 ## Why agents need more than a pipeline does
 
@@ -31,7 +31,7 @@ and bidi characters first, so `i​gnore` (zero-width space inside) and full-wid
 **Fields scanned:** `description`, `place_of_loss`, `garage_name`, `insured_name`, `policy_number`, `fir_number`,
 `vehicle_registration`. The pre-existing check scanned four of these. `policy_number` and `fir_number` are free
 strings that `fnol_fields()` serialises into the prompts, so an injection in `fir_number` reached the models
-unchecked. `test_injection_in_fir_number_is_caught` is the regression test (see `docs/INCIDENT_LOG.md`, INC-D-03).
+unchecked. `test_injection_in_fir_number_is_caught` is the regression test.
 
 ### Toxicity (layers 1 and 4)
 
@@ -41,7 +41,7 @@ unchecked. `test_injection_in_fir_number_is_caught` is the regression test (see 
   Claimants are often angry; refusing to triage their claim for swearing would be the wrong failure.
 * Output: any toxic text in what the system itself is about to return is blocked. The triage *summary* echoes the
   claimant's own words, so abuse (or a demanded "approval") there is **redacted with an informational flag but does not escalate**: the system
-  did not generate it (INC-D-02).
+  did not generate it.
 * Backend: a small local lexicon, on purpose (no model download, ~0 latency, works offline). `set_toxicity_scorer(fn)`
   plugs in a classifier; a broken classifier cannot take the pipeline down.
 
@@ -70,5 +70,5 @@ the run is escalated and the reason recorded; the blocked text is replaced with 
   not built because it needs a model download that is outside the offline/free constraints of this project.
 * The toxicity lexicon is English-centred and small. Multilingual and sarcastic abuse will be missed.
 * The output filter is a pattern list. It catches the phrasings above, not every way of promising payment.
-* Quantified false-positive behaviour is limited to the benign cases in the tests (9 narratives + 6 advisory
-  outputs). Run a sample of real FNOL text through `inspect_input` before relying on the thresholds.
+* False-positive behaviour is only checked against the benign cases in the tests. Run a sample of real FNOL text through
+  `inspect_input` before relying on the thresholds. To see the guardrails act on a live stack: `python scripts/demo_checks.py guardrails`.
