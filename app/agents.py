@@ -533,7 +533,14 @@ class LLMGateway:
                 raise LLMError(f"provider HTTP {r.status_code}: {r.text[:200]}", retryable=False)
             data = r.json()
             usage = data.get("usage") or {}
-            return data["choices"][0]["message"]["content"], {
+            # Some providers (Gemini) occasionally return a choice with no text (safety stop, empty reply,
+            # transient overload). Treat that as a retryable provider error instead of crashing the run.
+            choice = (data.get("choices") or [{}])[0]
+            text = (choice.get("message") or {}).get("content")
+            if not text:
+                raise LLMError(f"provider returned no content (finish_reason={choice.get('finish_reason')})",
+                               retryable=True)
+            return text, {
                 "prompt_tokens": usage.get("prompt_tokens", 0),
                 "completion_tokens": usage.get("completion_tokens", 0)}
 
