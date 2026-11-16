@@ -1,0 +1,20 @@
+{
+  "icici_lombard_claims_procedure.pdf": {
+    "sha256": "bf2a272e7c895870587af664661089805a4be883a8538032bda5028722e5409a",
+    "chunk_count": 5,
+    "build_time_utc": "2026-11-16T12:59:13.790870+00:00",
+    "model": "sentence-transformers/all-MiniLM-L6-v2"
+  },
+  "private-car-package-policy.pdf": {
+    "sha256": "3087a02efd87f079309614ab814aa7d5755912feed3e7e2febf9582ff55341d2",
+    "chunk_count": 191,
+    "build_time_utc": "2026-11-16T12:59:18.028820+00:00",
+    "model": "sentence-transformers/all-MiniLM-L6-v2"
+  },
+  "icici_lombard_policy_schedule_clauses.pdf": {
+    "sha256": "e7dc073f4d79e53d014bcc87fb26be0039ea56274571e7c4d7a1099cb3b60976",
+    "chunk_count": 3,
+    "build_time_utc": "2026-11-16T13:20:57.568335+00:00",
+    "model": "sentence-transformers/all-MiniLM-L6-v2"
+  }
+}

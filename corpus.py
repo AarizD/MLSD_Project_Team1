@@ -44,10 +44,13 @@ FNOL_FIELDS = {
 
 
 HEADING_RE = re.compile(
-    r"^\s*((?:SECTION|CHAPTER)\s+[IVX0-9A-Z.-]+[^\n]{0,140}"
-    r"|\d+(?:\.\d+){0,4}[.)]?\s+[A-Z][^\n]{2,140}"
-    r"|[A-Z][A-Z &/,()'-]{5,100})\s*$",
-    re.I,
+    r"^\s*((?i:SECTION|CHAPTER|PART)\s+[IVX0-9A-Z.-]+[^\n]{0,140}"
+    r"|IMT\.?\s*\d+[A-Z.]*\s+[^\n]{2,140}"
+    r"|[A-Z][A-Z0-9 &/,()'–-]{4,100})\s*$"
+)
+
+NOISE_LINE_RE = re.compile(
+    r"^\s*(?:-\d+-|UIN:\s*IRDAN\S+(?:\s+-\d+-\s+CIN:\s*\S+|\s+CIN:\s*\S+)?)\s*$"
 )
 
 CLAUSE_RE = re.compile(
@@ -224,13 +227,26 @@ def parse_pdf(path: Path) -> list[dict[str, Any]]:
             re.sub(r"\s+", " ", line).strip()
             for line in raw.splitlines()
         ]
-        lines = [line for line in lines if line]
+        lines = [
+            line for line in lines
+            if line and not NOISE_LINE_RE.match(line)
+        ]
 
         for line in lines:
             heading = HEADING_RE.match(line)
             clause = CLAUSE_RE.match(line)
 
             if heading:
+                # Merge consecutive heading lines (e.g., multi-line ALL-CAPS headings)
+                if not current_lines and current_heading != "Introduction" and len(current_heading) < 120:
+                    current_heading = f"{current_heading} {line.strip()}".strip()
+                    current_id = re.sub(
+                        r"[^A-Za-z0-9]+",
+                        "-",
+                        current_heading,
+                    ).strip("-").upper()[:70]
+                    continue
+
                 flush()
 
                 current_heading = line.strip()
@@ -244,7 +260,7 @@ def parse_pdf(path: Path) -> list[dict[str, Any]]:
 
                 current_lines = []
 
-            elif clause and len(" ".join(current_lines)) > 100:
+            elif clause and len(" ".join(current_lines)) > 900:
                 flush()
 
                 current_page = page_num

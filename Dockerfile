@@ -5,7 +5,8 @@ WORKDIR /srv
 
 COPY requirements-app.txt .
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements-app.txt -r requirements.txt
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch \
+    && pip install --no-cache-dir -r requirements-app.txt -r requirements.txt
 
 COPY app/ app/
 COPY corpus.py corpus.py

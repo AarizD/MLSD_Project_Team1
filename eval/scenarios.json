@@ -1,6 +1,6 @@
 {
  "_comment": "End-to-end evaluation set (L3). 'core' scenarios are what a correct system must pass; 'stretch' scenarios need real model reasoning (the deterministic stub is scripted and cannot pass them, they are reported separately). 'support' gives the passage that justifies the expected outcome as a verbatim quote, matched against the text of CITED passages, so it survives a change of corpus (clause ids may change; quotes are updated).",
- "corpus": "app/agents.py stand-in private-car corpus (replace quotes when Person B's index is wired in)",
+ "corpus": "ICICI Lombard Private Car Package Policy + Claims Procedure (FAISS index/)",
  "base": {
   "policy_number": "POL-2026-0001",
   "insured_name": "Asha Rao",
@@ -72,7 +72,7 @@
     },
     {
      "clause_id": "LIM-USE-1",
-     "quote": "The Policy does not cover use for hire or reward"
+     "quote": "Being used otherwise than in accordance with the .Limitations as to Use."
     }
    ]
   },
@@ -104,7 +104,7 @@
     },
     {
      "clause_id": "LIM-USE-1",
-     "quote": "The Policy does not cover use for hire or reward"
+     "quote": "Being used otherwise than in accordance with the .Limitations as to Use."
     }
    ]
   },
@@ -136,7 +136,7 @@
     },
     {
      "clause_id": "LIM-USE-1",
-     "quote": "The Policy does not cover use for hire or reward"
+     "quote": "Being used otherwise than in accordance with the .Limitations as to Use."
     }
    ]
   },
@@ -164,7 +164,7 @@
    "support": [
     {
      "clause_id": "LIM-USE-1",
-     "quote": "The Policy does not cover use for hire or reward"
+     "quote": "Being used otherwise than in accordance with the .Limitations as to Use."
     }
    ]
   },
@@ -191,7 +191,7 @@
    "support": [
     {
      "clause_id": "LIM-USE-1",
-     "quote": "Use only for social, domestic and pleasure purposes and for the insured's business"
+     "quote": "Being used otherwise than in accordance with the .Limitations as to Use."
     }
    ]
   },
@@ -222,7 +222,7 @@
    "support": [
     {
      "clause_id": "SEC1-OD-1",
-     "quote": "by burglary, housebreaking or theft"
+     "quote": "By burglary housebreaking or theft"
     }
    ]
   },
@@ -251,7 +251,7 @@
    "support": [
     {
      "clause_id": "SEC1-OD-1",
-     "quote": "fire, explosion, self ignition or lightning"
+     "quote": "By fire explosion self ignition or lightning"
     }
    ]
   },
@@ -282,7 +282,7 @@
    "support": [
     {
      "clause_id": "SEC2-TP-1",
-     "quote": "legally liable to pay in respect of death of or bodily injury to any person"
+     "quote": "Death of or bodily injury to any person"
     }
    ]
   },
@@ -394,7 +394,7 @@
    "support": [
     {
      "clause_id": "SEC1-OD-1",
-     "quote": "by flood, typhoon, hurricane, storm, inundation"
+     "quote": "By flood typhoon hurricane storm tempest inundation cyclone hailstorm frost"
     }
    ]
   },
@@ -448,7 +448,7 @@
    "support": [
     {
      "clause_id": "DRIVER-1",
-     "quote": "holds an effective driving licence at the time of the accident"
+     "quote": "holds an effective driving license"
     }
    ]
   },

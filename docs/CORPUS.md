@@ -4,25 +4,22 @@ The agent tools now use `corpus.py`'s FAISS index whenever it is available. In `
 app warns and uses the small sample corpus if no index exists. Set `CORPUS_BACKEND=faiss` to require the real index
 and stop with a clear error if it is missing or incomplete.
 
-## Build the index
+## Build or update the index
 
-Use the policy wording and claims procedure that match the vehicle and insurer you want to demonstrate. The PDF
-currently named `insurance_policy_pdf.pdf` in this repository is a two-wheeler policy; it does not match the sample
-private-car claim scenarios. Do not use it as a substitute for a private-car policy.
+The repository includes the **ICICI Lombard Private Car Package Policy** corpus in `data/policies/`:
+- `private-car-package-policy.pdf` — ICICI Lombard Private Car Package Policy Wording (Product Code 3001)
+- `icici_lombard_policy_schedule_clauses.pdf` — Standard Private Car Policy Schedule clauses (`LIMITATIONS AS TO USE` and `DRIVERS CLAUSE`)
+- `icici_lombard_claims_procedure.pdf` — ICICI Lombard Motor Claims Procedure (intimation, cashless/reimbursement, surveyor, document checklist, theft & third-party steps)
 
-In PowerShell, place the correct PDFs in the ignored `data/policies` folder and build the index:
+The pre-built FAISS index (`199` chunks) lives in `index/` (`corpus.faiss`, `chunks.jsonl`, `documents.json`) and is committed to the repository so `docker compose up` works immediately from a clean clone.
+
+If you add or modify PDFs in `data/policies/`, rebuild the index on the host:
 
 ```powershell
-New-Item -ItemType Directory -Force data/policies | Out-Null
-Copy-Item "C:\path\to\your-private-car-policy.pdf" data/policies\
-Copy-Item "C:\path\to\your-claims-procedure.pdf" data/policies\
 python -m pip install -r requirements.txt
 python corpus.py index
-python corpus.py search "limits on using the insured vehicle for hire or reward"
+python corpus.py search "Limitations as to Use" --section-type limitation
 ```
-
-The index files are written to `index/`, which is ignored by Git. Policy PDFs in `data/policies/` are also ignored so
-private documents are not accidentally committed.
 
 ## Run the app
 
@@ -39,6 +36,4 @@ index and model. Rebuild the index on the host and recreate the worker to load c
 For running the Python app directly on the host, set `CORPUS_BACKEND=faiss` in `.env` and run the app from the
 project directory. The host needs the dependencies in `requirements.txt` as well as `requirements-app.txt`.
 
-The evaluation labels in `eval/scenarios.json` still refer to the sample clauses. Update their supporting quotes,
-clause IDs, and expected outcomes to match your selected policy before treating evaluation scores as results for that
-policy.
+The evaluation labels in `eval/scenarios.json` have been updated to match the indexed ICICI Lombard corpus quotes.
