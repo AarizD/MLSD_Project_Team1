@@ -1,20 +1,23 @@
 {
-  "icici_lombard_claims_procedure.pdf": {
-    "sha256": "bf2a272e7c895870587af664661089805a4be883a8538032bda5028722e5409a",
-    "chunk_count": 5,
-    "build_time_utc": "2026-11-16T12:59:13.790870+00:00",
-    "model": "sentence-transformers/all-MiniLM-L6-v2"
-  },
   "private-car-package-policy.pdf": {
     "sha256": "3087a02efd87f079309614ab814aa7d5755912feed3e7e2febf9582ff55341d2",
-    "chunk_count": 191,
-    "build_time_utc": "2026-11-16T12:59:18.028820+00:00",
-    "model": "sentence-transformers/all-MiniLM-L6-v2"
+    "chunk_count": 315,
+    "build_time_utc": "2026-11-16T16:43:29.782867+00:00",
+    "model": "sentence-transformers/all-MiniLM-L6-v2",
+    "parser_version": "2-columns-850"
   },
-  "icici_lombard_policy_schedule_clauses.pdf": {
-    "sha256": "e7dc073f4d79e53d014bcc87fb26be0039ea56274571e7c4d7a1099cb3b60976",
+  "claims_procedure_summary.pdf": {
+    "sha256": "101e6c3ad604e2077d2321dc5aa14da72c007ca403a24c9f2ddb5596c92e523b",
+    "chunk_count": 6,
+    "build_time_utc": "2026-11-16T16:43:11.944958+00:00",
+    "model": "sentence-transformers/all-MiniLM-L6-v2",
+    "parser_version": "2-columns-850"
+  },
+  "schedule_clauses_transcription.pdf": {
+    "sha256": "ba3d9079ded8a8c88d45aff984101b2325da7c386933d759c9bb62b66035cb12",
     "chunk_count": 3,
-    "build_time_utc": "2026-11-16T13:20:57.568335+00:00",
-    "model": "sentence-transformers/all-MiniLM-L6-v2"
+    "build_time_utc": "2026-11-16T16:43:29.912652+00:00",
+    "model": "sentence-transformers/all-MiniLM-L6-v2",
+    "parser_version": "2-columns-850"
   }
 }

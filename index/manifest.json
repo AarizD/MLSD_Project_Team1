@@ -1,0 +1,15 @@
+{
+  "built_at_utc": "2026-11-16T16:44:26.174191+00:00",
+  "model": "sentence-transformers/all-MiniLM-L6-v2",
+  "mode": "full",
+  "documents": 3,
+  "chunks": 324,
+  "embedded_this_run": 324,
+  "embedding_seconds": 56.259,
+  "throughput_chunks_per_second": 5.76,
+  "versions": {
+    "claims_procedure_summary.pdf": "101e6c3ad604",
+    "private-car-package-policy.pdf": "3087a02efd87",
+    "schedule_clauses_transcription.pdf": "ba3d9079ded8"
+  }
+}
