@@ -30,6 +30,8 @@ if __name__ == "__main__":
         from prometheus_client import CollectorRegistry, multiprocess, start_http_server
         reg = CollectorRegistry()
         multiprocess.MultiProcessCollector(reg)
+        from app.metrics import IndexFreshnessCollector
+        reg.register(IndexFreshnessCollector())  # D2: index freshness and build throughput
         start_http_server(port, registry=reg)
         logging.getLogger("worker").info("worker metrics on :%s", port)
     conn = Redis.from_url(os.getenv("REDIS_URL", "redis://redis:6379/0"))

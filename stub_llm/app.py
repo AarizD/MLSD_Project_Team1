@@ -77,6 +77,30 @@ def _parse_history(user: str):
     return n_actions, clauses
 
 
+# Clauses are chosen by what their text says, not by hard-coded IDs, so the stub keeps working when the
+# corpus is re-parsed and clause IDs change.
+CLAUSE_ID_RE = re.compile(r"[A-Z0-9][A-Z0-9-]{1,80}")
+OWN_DAMAGE_COVER = ["indemnify the insured against loss or damage to the vehicle"]
+THIRD_PARTY_COVER = ["indemnify", "death of or bodily injury to any person"]
+USE_LIMITATION = ["social domestic and pleasure", "hire or reward"]
+USE_EXCEPTION = ["otherwise than in accordance with the limitations as to use"]
+
+
+def _plain(text: str) -> str:
+    return re.sub(r"[^a-z0-9%]+", " ", text.lower()).strip()
+
+
+def _find(clauses: dict, phrases: list[str]):
+    """First clause whose text contains every phrase; returns (clause_id, sentence holding the first phrase)."""
+    for cid, c in clauses.items():
+        plain = _plain(c["text"])
+        if all(_plain(p) in plain for p in phrases):
+            key = _plain(phrases[0])
+            sent = next((x for x in re.split(r"(?<=[.;])\s+", c["text"]) if key in _plain(x)), _sentence(c["text"]))
+            return cid, sent.strip()
+    return None, None
+
+
 def coverage_reply(user: str) -> dict:
     n, clauses = _parse_history(user)
     m = re.search(r"<claim_text>(.*?)</claim_text>", user, re.S)
@@ -84,7 +108,7 @@ def coverage_reply(user: str) -> dict:
     commercial = bool(re.search(r"deliver|swiggy|zomato|uber|\bola\b|taxi|fare|passenger|for hire|reward|courier", d))
     search = lambda q, st: {"thought": "search", "action": "search_corpus", "args": {"query": q, "k": 5, "section_type": st}}
     if n == 0:
-        return search("accident damage to the insured vehicle " + d[:150], "cover")
+        return search("loss of or damage to the vehicle insured by accidental external means", "cover")
     if n == 1:
         return search("vehicle used for " + ("hire or reward delivery" if commercial else "private use") +
                       "; limitations as to use, permitted purposes", "limitation")
@@ -93,18 +117,22 @@ def coverage_reply(user: str) -> dict:
     if n == 3:
         for c in clauses.values():
             for ref in c["refs"]:
-                if ref not in clauses:
+                if CLAUSE_ID_RE.fullmatch(ref) and ref not in clauses:
                     return {"thought": f"follow ref {ref}", "action": "get_clause", "args": {"clause_id": ref}}
-    base = "SEC2-TP-1" if "SEC2-TP-1" in clauses and "SEC1-OD-1" not in clauses else "SEC1-OD-1"
     cits, applies = [], "within_cover"
     pos = "The loss appears to fall within the own-damage cover."
-    if base in clauses:
-        cits.append({"clause_id": base, "support": _sentence(clauses[base]["text"])})
-    if commercial and "LIM-USE-1" in clauses:
+    cid, sup = _find(clauses, OWN_DAMAGE_COVER)
+    if cid is None:
+        cid, sup = _find(clauses, THIRD_PARTY_COVER)
+    if cid:
+        cits.append({"clause_id": cid, "support": sup})
+    lim_id, lim_sup = _find(clauses, USE_LIMITATION)
+    if commercial and lim_id:
         applies = "outside_cover"
-        cits.append({"clause_id": "LIM-USE-1", "support": _sentence(clauses["LIM-USE-1"]["text"])})
-        if "GEN-EXCL-1" in clauses:
-            cits.append({"clause_id": "GEN-EXCL-1", "support": _sentence(clauses["GEN-EXCL-1"]["text"])})
+        cits.append({"clause_id": lim_id, "support": lim_sup})
+        exc_id, exc_sup = _find(clauses, USE_EXCEPTION)
+        if exc_id:
+            cits.append({"clause_id": exc_id, "support": exc_sup})
         pos = ("Own-damage cover would apply to accidental damage, but the vehicle appears to have been used for a "
                "purpose outside the Limitations as to Use, and the General Exceptions exclude loss while so used.")
     return {"thought": "have cover and modifying provisions", "action": "finish",

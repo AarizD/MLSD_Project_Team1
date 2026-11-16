@@ -171,3 +171,38 @@ def render_metrics() -> bytes:
 def metrics_endpoint() -> Response:
     """FastAPI endpoint handler returning Prometheus text exposition format."""
     return Response(content=render_metrics(), media_type=CONTENT_TYPE_LATEST)
+
+
+class IndexFreshnessCollector:
+    """Exports the corpus index's freshness and the last build's throughput (D2), read from
+    index/manifest.json (written by `python corpus.py index`) at every scrape, so a rebuild shows up without a
+    restart. Registered on the worker's metrics server, the container that mounts the index."""
+
+    def __init__(self, index_dir=None):
+        self.index_dir = index_dir or os.getenv("CORPUS_INDEX_DIR", "index")
+
+    def collect(self):
+        import json
+        import datetime as dt
+        from prometheus_client.core import GaugeMetricFamily, InfoMetricFamily
+        try:
+            with open(os.path.join(self.index_dir, "manifest.json"), encoding="utf-8") as f:
+                m = json.load(f)
+        except (OSError, ValueError):
+            return
+        built = dt.datetime.fromisoformat(m["built_at_utc"]).timestamp()
+        for name, doc, value in (
+            ("corpus_index_built_timestamp_seconds", "When the index was last built (Unix time)", built),
+            ("corpus_index_chunks", "Chunks in the index", m.get("chunks")),
+            ("corpus_index_documents", "Source documents in the index", m.get("documents")),
+            ("corpus_index_last_build_embedded_chunks", "Chunks embedded by the last build", m.get("embedded_this_run")),
+            ("corpus_index_last_build_seconds", "Embedding time of the last build", m.get("embedding_seconds")),
+            ("corpus_index_build_throughput_chunks_per_second", "Embedding throughput of the last build",
+             m.get("throughput_chunks_per_second")),
+        ):
+            if value is not None:
+                yield GaugeMetricFamily(name, doc, value=float(value))
+        info = InfoMetricFamily("corpus_index", "Index model, build mode and source document versions")
+        info.add_metric([], {"model": str(m.get("model")), "mode": str(m.get("mode")),
+                             **{f"doc_{i}": f"{k}@{v}" for i, (k, v) in enumerate(sorted(m.get("versions", {}).items()))}})
+        yield info

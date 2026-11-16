@@ -1,6 +1,8 @@
 # Local Development / Evaluation Stack (D3, D4, D5, A6, A7)
 # Run all services:   docker compose up --build
 # Scale agent workers: docker compose up --build --scale worker=3
+# Build / update the policy index (D3, inside a container, incremental):
+#   docker compose run --rm indexer
 #
 # Ports:
 #   8000  - Claim Ingestion API & Web UI (http://localhost:8000)
@@ -80,6 +82,19 @@ services:
       timeout: 3s
       retries: 3
       start_period: 5m
+
+  # One-shot job, not started by `docker compose up` (profile "tools"). Parses data/policies, re-embeds only
+  # changed documents and writes index/ (FAISS + chunks + manifest.json), so indexing also runs in a container.
+  indexer:
+    build: .
+    profiles: ["tools"]
+    command: ["python", "corpus.py", "index"]
+    environment:
+      HF_HOME: /models
+    volumes:
+      - ./data/policies:/srv/data/policies:ro
+      - ./index:/srv/index
+      - models:/models
 
   jaeger:
     image: jaegertracing/all-in-one:1.60

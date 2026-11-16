@@ -1,6 +1,6 @@
 {
- "_comment": "End-to-end evaluation set (L3). 'core' scenarios are what a correct system must pass; 'stretch' scenarios need real model reasoning (the deterministic stub is scripted and cannot pass them, they are reported separately). 'support' gives the passage that justifies the expected outcome as a verbatim quote, matched against the text of CITED passages, so it survives a change of corpus (clause ids may change; quotes are updated).",
- "corpus": "ICICI Lombard Private Car Package Policy + Claims Procedure (FAISS index/)",
+ "_comment": "End-to-end evaluation set (L3). 'core' scenarios are what a correct system must pass; 'stretch' scenarios need real model reasoning (the deterministic stub is scripted and cannot pass them, they are reported separately). 'support' gives the passage that justifies the expected outcome as a verbatim quote, matched against the text of CITED passages, so it survives a change of corpus (clause ids follow index/chunks.jsonl; rebuild the index and re-check them if the parser changes).",
+ "corpus": "ICICI Lombard Private Car Package Policy wording (insurer PDF) + team transcriptions of the schedule clauses and claims procedure (FAISS index/). Clause IDs match index/chunks.jsonl as built by corpus.py.",
  "base": {
   "policy_number": "POL-2026-0001",
   "insured_name": "Asha Rao",
@@ -33,12 +33,12 @@
     "claim_type": "own_damage",
     "applies": "within_cover",
     "must_cite": [
-     "SEC1-OD-1"
+     "SECTION-I-LOSS-OF-OR-DAMAGE-TO-THE-VEHICLE-INSURED"
     ]
    },
    "support": [
     {
-     "clause_id": "SEC1-OD-1",
+     "clause_id": "SECTION-I-LOSS-OF-OR-DAMAGE-TO-THE-VEHICLE-INSURED",
      "quote": "by accidental external means"
     }
    ]
@@ -61,18 +61,22 @@
     "claim_type": "own_damage",
     "applies": "outside_cover",
     "must_cite": [
-     "SEC1-OD-1",
-     "LIM-USE-1"
+     "SECTION-I-LOSS-OF-OR-DAMAGE-TO-THE-VEHICLE-INSURED",
+     "GENERAL-EXCEPTIONS"
     ]
    },
    "support": [
     {
-     "clause_id": "SEC1-OD-1",
+     "clause_id": "SECTION-I-LOSS-OF-OR-DAMAGE-TO-THE-VEHICLE-INSURED",
      "quote": "by accidental external means"
     },
     {
-     "clause_id": "LIM-USE-1",
+     "clause_id": "GENERAL-EXCEPTIONS",
      "quote": "Being used otherwise than in accordance with the .Limitations as to Use."
+    },
+    {
+     "clause_id": "LIMITATIONS-AS-TO-USE",
+     "quote": "Carriage of goods (other than samples or personal luggage)"
     }
    ]
   },
@@ -93,18 +97,22 @@
     "claim_type": "own_damage",
     "applies": "outside_cover",
     "must_cite": [
-     "SEC1-OD-1",
-     "LIM-USE-1"
+     "SECTION-I-LOSS-OF-OR-DAMAGE-TO-THE-VEHICLE-INSURED",
+     "GENERAL-EXCEPTIONS"
     ]
    },
    "support": [
     {
-     "clause_id": "SEC1-OD-1",
+     "clause_id": "SECTION-I-LOSS-OF-OR-DAMAGE-TO-THE-VEHICLE-INSURED",
      "quote": "by accidental external means"
     },
     {
-     "clause_id": "LIM-USE-1",
+     "clause_id": "GENERAL-EXCEPTIONS",
      "quote": "Being used otherwise than in accordance with the .Limitations as to Use."
+    },
+    {
+     "clause_id": "LIMITATIONS-AS-TO-USE",
+     "quote": "Carriage of goods (other than samples or personal luggage)"
     }
    ]
   },
@@ -125,18 +133,22 @@
     "claim_type": "own_damage",
     "applies": "outside_cover",
     "must_cite": [
-     "SEC1-OD-1",
-     "LIM-USE-1"
+     "SECTION-I-LOSS-OF-OR-DAMAGE-TO-THE-VEHICLE-INSURED",
+     "GENERAL-EXCEPTIONS"
     ]
    },
    "support": [
     {
-     "clause_id": "SEC1-OD-1",
+     "clause_id": "SECTION-I-LOSS-OF-OR-DAMAGE-TO-THE-VEHICLE-INSURED",
      "quote": "by accidental external means"
     },
     {
-     "clause_id": "LIM-USE-1",
+     "clause_id": "GENERAL-EXCEPTIONS",
      "quote": "Being used otherwise than in accordance with the .Limitations as to Use."
+    },
+    {
+     "clause_id": "LIMITATIONS-AS-TO-USE",
+     "quote": "Hire or Reward"
     }
    ]
   },
@@ -157,14 +169,18 @@
     "claim_type": "own_damage",
     "applies": "outside_cover",
     "must_cite": [
-     "SEC1-OD-1",
-     "LIM-USE-1"
+     "SECTION-I-LOSS-OF-OR-DAMAGE-TO-THE-VEHICLE-INSURED",
+     "GENERAL-EXCEPTIONS"
     ]
    },
    "support": [
     {
-     "clause_id": "LIM-USE-1",
+     "clause_id": "GENERAL-EXCEPTIONS",
      "quote": "Being used otherwise than in accordance with the .Limitations as to Use."
+    },
+    {
+     "clause_id": "LIMITATIONS-AS-TO-USE",
+     "quote": "Carriage of goods (other than samples or personal luggage)"
     }
    ]
   },
@@ -185,13 +201,13 @@
     "claim_type": "own_damage",
     "applies": "within_cover",
     "must_cite": [
-     "SEC1-OD-1"
+     "SECTION-I-LOSS-OF-OR-DAMAGE-TO-THE-VEHICLE-INSURED"
     ]
    },
    "support": [
     {
-     "clause_id": "LIM-USE-1",
-     "quote": "Being used otherwise than in accordance with the .Limitations as to Use."
+     "clause_id": "LIMITATIONS-AS-TO-USE",
+     "quote": "for the insured's business or profession"
     }
    ]
   },
@@ -216,12 +232,12 @@
     "claim_type": "theft",
     "applies": "within_cover",
     "must_cite": [
-     "SEC1-OD-1"
+     "SECTION-I-LOSS-OF-OR-DAMAGE-TO-THE-VEHICLE-INSURED"
     ]
    },
    "support": [
     {
-     "clause_id": "SEC1-OD-1",
+     "clause_id": "SECTION-I-LOSS-OF-OR-DAMAGE-TO-THE-VEHICLE-INSURED",
      "quote": "By burglary housebreaking or theft"
     }
    ]
@@ -245,12 +261,12 @@
     "claim_type": "total_loss",
     "applies": "within_cover",
     "must_cite": [
-     "SEC1-OD-1"
+     "SECTION-I-LOSS-OF-OR-DAMAGE-TO-THE-VEHICLE-INSURED"
     ]
    },
    "support": [
     {
-     "clause_id": "SEC1-OD-1",
+     "clause_id": "SECTION-I-LOSS-OF-OR-DAMAGE-TO-THE-VEHICLE-INSURED",
      "quote": "By fire explosion self ignition or lightning"
     }
    ]
@@ -276,12 +292,12 @@
     "claim_type": "third_party",
     "applies": "within_cover",
     "must_cite": [
-     "SEC2-TP-1"
+     "LIABILITY-TO-THIRD-PARTIES"
     ]
    },
    "support": [
     {
-     "clause_id": "SEC2-TP-1",
+     "clause_id": "LIABILITY-TO-THIRD-PARTIES",
      "quote": "Death of or bodily injury to any person"
     }
    ]
@@ -305,12 +321,12 @@
     "claim_type": "own_damage",
     "applies": "within_cover",
     "must_cite": [
-     "SEC1-OD-1"
+     "SECTION-I-LOSS-OF-OR-DAMAGE-TO-THE-VEHICLE-INSURED"
     ]
    },
    "support": [
     {
-     "clause_id": "SEC1-OD-1",
+     "clause_id": "SECTION-I-LOSS-OF-OR-DAMAGE-TO-THE-VEHICLE-INSURED",
      "quote": "by accidental external means"
     }
    ]
@@ -333,12 +349,12 @@
     "claim_type": "own_damage",
     "applies": "within_cover",
     "must_cite": [
-     "SEC1-OD-1"
+     "SECTION-I-LOSS-OF-OR-DAMAGE-TO-THE-VEHICLE-INSURED"
     ]
    },
    "support": [
     {
-     "clause_id": "SEC1-OD-1",
+     "clause_id": "SECTION-I-LOSS-OF-OR-DAMAGE-TO-THE-VEHICLE-INSURED",
      "quote": "by accidental external means"
     }
    ]
@@ -361,12 +377,12 @@
     "claim_type": "own_damage",
     "applies": "within_cover",
     "must_cite": [
-     "SEC1-OD-1"
+     "SECTION-I-LOSS-OF-OR-DAMAGE-TO-THE-VEHICLE-INSURED"
     ]
    },
    "support": [
     {
-     "clause_id": "SEC1-OD-1",
+     "clause_id": "SECTION-I-LOSS-OF-OR-DAMAGE-TO-THE-VEHICLE-INSURED",
      "quote": "by accidental external means"
     }
    ]
@@ -388,12 +404,12 @@
     "claim_type": "own_damage",
     "applies": "within_cover",
     "must_cite": [
-     "SEC1-OD-1"
+     "SECTION-I-LOSS-OF-OR-DAMAGE-TO-THE-VEHICLE-INSURED"
     ]
    },
    "support": [
     {
-     "clause_id": "SEC1-OD-1",
+     "clause_id": "SECTION-I-LOSS-OF-OR-DAMAGE-TO-THE-VEHICLE-INSURED",
      "quote": "By flood typhoon hurricane storm tempest inundation cyclone hailstorm frost"
     }
    ]
@@ -414,13 +430,13 @@
     "claim_type": "own_damage",
     "applies": "outside_cover",
     "must_cite": [
-     "SEC1-OD-1",
-     "SEC1-EXCL-1"
+     "SECTION-I-LOSS-OF-OR-DAMAGE-TO-THE-VEHICLE-INSURED",
+     "5-PART2"
     ]
    },
    "support": [
     {
-     "clause_id": "SEC1-EXCL-1",
+     "clause_id": "5-PART2",
      "quote": "under the influence of intoxicating liquor or drugs"
     }
    ]
@@ -441,13 +457,13 @@
     "claim_type": "own_damage",
     "applies": "outside_cover",
     "must_cite": [
-     "SEC1-OD-1",
-     "DRIVER-1"
+     "SECTION-I-LOSS-OF-OR-DAMAGE-TO-THE-VEHICLE-INSURED",
+     "DRIVERS-CLAUSE"
     ]
    },
    "support": [
     {
-     "clause_id": "DRIVER-1",
+     "clause_id": "DRIVERS-CLAUSE",
      "quote": "holds an effective driving license"
     }
    ]
@@ -469,12 +485,12 @@
     "route": "surveyor",
     "claim_type": "third_party",
     "must_cite": [
-     "SEC2-TP-1"
+     "LIABILITY-TO-THIRD-PARTIES"
     ]
    },
    "support": [
     {
-     "clause_id": "SEC2-TP-1",
+     "clause_id": "LIABILITY-TO-THIRD-PARTIES",
      "quote": "damage to property other than property belonging to the insured"
     }
    ]
@@ -620,7 +636,7 @@
     "claim_type": "own_damage",
     "applies": "within_cover",
     "must_cite": [
-     "SEC1-OD-1"
+     "SECTION-I-LOSS-OF-OR-DAMAGE-TO-THE-VEHICLE-INSURED"
     ],
     "flags": [
      "toxicity_mild:description"
@@ -628,7 +644,7 @@
    },
    "support": [
     {
-     "clause_id": "SEC1-OD-1",
+     "clause_id": "SECTION-I-LOSS-OF-OR-DAMAGE-TO-THE-VEHICLE-INSURED",
      "quote": "by accidental external means"
     }
    ]
@@ -649,7 +665,7 @@
     "claim_type": "own_damage",
     "applies": "within_cover",
     "must_cite": [
-     "SEC1-OD-1"
+     "SECTION-I-LOSS-OF-OR-DAMAGE-TO-THE-VEHICLE-INSURED"
     ],
     "no_text": [
      "approved",
@@ -659,7 +675,7 @@
    },
    "support": [
     {
-     "clause_id": "SEC1-OD-1",
+     "clause_id": "SECTION-I-LOSS-OF-OR-DAMAGE-TO-THE-VEHICLE-INSURED",
      "quote": "by accidental external means"
     }
    ]
