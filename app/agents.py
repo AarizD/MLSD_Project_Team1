@@ -228,8 +228,8 @@ if _use_faiss_corpus():
 def search_corpus(query: str, k: int = 5, section_type: str | None = None) -> list[dict]:
     """Returns [{clause_id, section, section_type, source_doc, page, refs, text, score}]"""
     if _use_faiss_corpus():
-        from corpus import search_corpus as faiss_search
-        return faiss_search(query, k=int(k or 5), section_type=section_type or None)
+        from corpus import retrieve  # LangChain BaseRetriever over the FAISS index (L1)
+        return retrieve(query, k=int(k or 5), section_type=section_type or None)
     return _INDEX.search(query, k=int(k or 5), section_type=section_type or None)
 
 
@@ -613,6 +613,31 @@ def stub_triage(fnol):
             "summary": (fnol.get("description") or "")[:120]}
 
 
+CLAUSE_ID_RE = re.compile(r"[A-Z0-9][A-Z0-9-]{1,80}")
+
+
+def _plain(text):
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9%]+", " ", (text or "").lower())).strip()
+
+
+# What each kind of clause says, as phrases that must all appear (case and punctuation ignored).
+OWN_DAMAGE_COVER = ["indemnify the insured against loss or damage to the vehicle"]
+THIRD_PARTY_COVER = ["indemnify", "death of or bodily injury to any person"]
+USE_LIMITATION = ["social domestic and pleasure", "hire or reward"]
+USE_EXCEPTION = ["otherwise than in accordance with the limitations as to use"]
+THEFT_PROCEDURE = ["theft", "first information report"]
+TOTAL_LOSS = ["75%", "declared value"]
+
+
+def find_clause(retrieved, phrases):
+    """First retrieved clause whose text contains every phrase; None if there is none."""
+    for cid, p in retrieved.items():
+        text = _plain(p.get("text"))
+        if all(_plain(ph) in text for ph in phrases):
+            return cid
+    return None
+
+
 def stub_coverage(v):
     sp, retrieved, tri = v["_scratchpad"], v["_retrieved"], v["_triage"]
     attempt, ents, ct = v["_attempt"], tri.get("entities", {}), tri.get("claim_type")
@@ -624,10 +649,15 @@ def stub_coverage(v):
 
     # step 1: the cover clause (on a retry: a fresh search with a different query)
     if not did(searched("cover")):
-        if attempt > 1:
-            return search(f"{ct.replace('_', ' ')} loss or damage to the vehicle insured", "cover")
-        return search(f"{ents.get('cause', 'accident')} damage to the insured vehicle: {v['_description'][:200]}",
-                      "cover")
+        if attempt > 1:  # a different phrasing on the retry: the wording a cover clause itself uses
+            return search("the company will indemnify the insured against loss or damage to the vehicle insured "
+                          "hereunder", "cover")
+        # search in the policy's own words for the kind of loss, not the customer's description
+        cause = "theft" if ct == "theft" else ("fire" if ct == "total_loss" else "accidental external means")
+        if ct == "third_party":
+            return search("liability to third parties: death of or bodily injury to any person, damage to property",
+                          "cover")
+        return search(f"loss of or damage to the vehicle insured by {cause}", "cover")
     # step 2: provisions that could modify it (reuse earlier attempts' searches)
     if not did(searched("limitation"), sp):
         return search(f"vehicle used for {ents.get('vehicle_use_at_time_of_loss', 'private use')}; "
@@ -639,32 +669,36 @@ def stub_coverage(v):
     fetched = {s["args"].get("clause_id") for s in this if s["action"] == "get_clause"}
     for cid, p in retrieved.items():
         for ref in p.get("refs") or []:
-            if ref not in retrieved and ref not in fetched:
+            # follow references that are clause IDs; free-text references ("subject to the terms...") are not
+            if CLAUSE_ID_RE.fullmatch(ref) and ref not in retrieved and ref not in fetched:
                 return {"thought": f"{cid} refers to {ref}", "action": "get_clause", "args": {"clause_id": ref}}
 
-    base = "SEC2-TP-1" if ct == "third_party" else "SEC1-OD-1"
+    # Pick citations by what the retrieved text says, not by fixed IDs, so the stub works on the sample clauses
+    # and on the real index alike.
+    cover = find_clause(retrieved, THIRD_PARTY_COVER if ct == "third_party" else OWN_DAMAGE_COVER)
     cite = lambda cid, words: {"clause_id": cid, "support": _first_sentence_with(retrieved[cid]["text"], words)}
-    cits = [cite(base, ["theft"] if ct == "theft" else ["accidental", "indemnify"])] if base in retrieved else []
-    applies, pos = "within_cover", f"The loss appears to fall within {retrieved.get(base, {}).get('section', 'the cover')}."
-    if ents.get("commercial_use") and "LIM-USE-1" in retrieved:
+    cits = [cite(cover, ["theft"] if ct == "theft" else ["accidental", "indemnify", "bodily injury"])] if cover else []
+    applies, pos = "within_cover", f"The loss appears to fall within {retrieved.get(cover, {}).get('section', 'the cover')}."
+    use_limit = find_clause(retrieved, USE_LIMITATION)
+    if ents.get("commercial_use") and use_limit:
         applies = "outside_cover"
-        cits.append(cite("LIM-USE-1", ["hire or reward"]))
-        if "GEN-EXCL-1" in retrieved:
-            cits.append(cite("GEN-EXCL-1", ["limitations as to use"]))
+        cits.append(cite(use_limit, ["hire or reward"]))
+        exception = find_clause(retrieved, USE_EXCEPTION)
+        if exception and exception != use_limit:
+            cits.append(cite(exception, ["limitations as to use"]))
         pos = ("Own-damage cover would apply to accidental damage, but the vehicle was being used for "
                f"{ents.get('vehicle_use_at_time_of_loss')}, which is outside the permitted use under the "
                "Limitations as to Use, and the General Exceptions exclude loss while the vehicle is so used.")
-    elif ct == "theft" and "CP-THEFT-1" in retrieved:
-        cits.append(cite("CP-THEFT-1", ["first information report"]))
+    elif ct == "theft" and find_clause(retrieved, THEFT_PROCEDURE):
+        cits.append(cite(find_clause(retrieved, THEFT_PROCEDURE), ["first information report", "fir"]))
         pos = "Theft of the vehicle is within Section I cover, subject to an FIR and the theft claim procedure."
-    elif ct == "total_loss" and "TOTAL-LOSS-1" in retrieved:
-        cits.append(cite("TOTAL-LOSS-1", ["75%"]))
+    elif ct == "total_loss" and find_clause(retrieved, TOTAL_LOSS):
+        cits.append(cite(find_clause(retrieved, TOTAL_LOSS), ["75%"]))
         pos = "Damage is within Section I cover; constructive total loss depends on repair cost against 75% of IDV."
     if v["_stub_mode"] == "hallucinate" and attempt == 1:
         cits.append({"clause_id": "SEC1-OD-9", "support": "Cover extends to all commercial use of the vehicle."})
     return {"thought": "have cover and modifying provisions", "action": "finish",
             "answer": {"applies": applies, "conflict": False, "coverage_position": pos, "citations": cits}}
-
 
 def stub_respond(prompt_id, v):
     if prompt_id.startswith("triage"):

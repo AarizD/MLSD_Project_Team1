@@ -1,4 +1,6 @@
 pypdf>=5.0.0
+pdfplumber>=0.11.0
 sentence-transformers>=3.0.0
 faiss-cpu>=1.8.0
 numpy>=1.26.0
+langchain-core>=1.4.7,<2

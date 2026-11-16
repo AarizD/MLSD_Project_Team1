@@ -1,39 +1,63 @@
-# Connect the running agents to the policy corpus
+# Policy corpus and retrieval
 
-The agent tools now use `corpus.py`'s FAISS index whenever it is available. In `CORPUS_BACKEND=auto` mode, the
-app warns and uses the small sample corpus if no index exists. Set `CORPUS_BACKEND=faiss` to require the real index
-and stop with a clear error if it is missing or incomplete.
+The agent tools use `corpus.py`'s FAISS index whenever it is available. In `CORPUS_BACKEND=auto` mode the app warns
+and falls back to the small sample corpus if no index exists. Set `CORPUS_BACKEND=faiss` to require the real index and
+stop with a clear error if it is missing or incomplete.
 
-## Build or update the index
+## Documents in `data/policies/`
 
-The repository includes the **ICICI Lombard Private Car Package Policy** corpus in `data/policies/`:
-- `private-car-package-policy.pdf` — ICICI Lombard Private Car Package Policy Wording (Product Code 3001)
-- `icici_lombard_policy_schedule_clauses.pdf` — Standard Private Car Policy Schedule clauses (`LIMITATIONS AS TO USE` and `DRIVERS CLAUSE`)
-- `icici_lombard_claims_procedure.pdf` — ICICI Lombard Motor Claims Procedure (intimation, cashless/reimbursement, surveyor, document checklist, theft & third-party steps)
+| File | What it is |
+|---|---|
+| `private-car-package-policy.pdf` | ICICI Lombard Private Car Package Policy wording (insurer-issued, 24 pages, two-column layout) |
+| `schedule_clauses_transcription.pdf` | **Team-prepared transcription** of the standard schedule clauses `LIMITATIONS AS TO USE` and `DRIVERS CLAUSE`. Not an insurer-issued document. |
+| `claims_procedure_summary.pdf` | **Team-prepared summary** of the motor claims procedure (intimation, survey, documents, theft and third-party steps). Not an insurer-issued document; figures in it have not been checked against the insurer. |
 
-The pre-built FAISS index (`199` chunks) lives in `index/` (`corpus.faiss`, `chunks.jsonl`, `documents.json`) and is committed to the repository so `docker compose up` works immediately from a clean clone.
+The two team-prepared files were generated with ReportLab so the schedule wording the 4.1 case depends on is in the
+corpus. Replace them with insurer-issued documents if you obtain them; nothing else needs to change.
 
-If you add or modify PDFs in `data/policies/`, rebuild the index on the host:
+## How a PDF becomes chunks
 
-```powershell
-python -m pip install -r requirements.txt
-python corpus.py index
-python corpus.py search "Limitations as to Use" --section-type limitation
+1. **Text extraction.** `pdfplumber` detects two-column pages (almost no words cross the page midline) and reads the
+   left column, then the right, so clauses are not interleaved. Single-column pages fall back to `pypdf`.
+2. **Noise removal.** Page numbers, `CIN:` / `UIN:` footers and similar lines are dropped.
+3. **Structure-aware chunking.** A new chunk starts at each heading (SECTION, CONDITION, GENERAL EXCEPTIONS, …).
+   Each chunk is typed (`cover`, `exclusion`, `limitation`, `condition`, `definition`, `procedure`, …) and records its
+   cross-references (`refs`).
+4. **Length limit.** Clauses longer than `CHUNK_MAX_CHARS` (default 850 characters, under MiniLM's 256 word-piece
+   limit) are split on sentence boundaries into `<clause_id>-PART<n>` with a one-sentence overlap. `get_clause` on the
+   parent ID returns all parts joined, so following a reference always returns the whole clause.
+
+Current corpus: **324 chunks** (315 policy wording, 6 claims procedure, 3 schedule clauses).
+
+## Index and retrieval
+
+- Embeddings: `sentence-transformers/all-MiniLM-L6-v2` (384-d), L2-normalised, stored in `faiss.IndexIDMap2` over
+  `IndexFlatIP` — inner product of unit vectors is **cosine similarity**.
+- Query: hybrid score = 0.8 × semantic + 0.2 × keyword overlap (+0.03 exact-phrase bonus), optional `section_type`
+  filter, top `k = 5`.
+- The agents call retrieval through `corpus.PolicyClauseRetriever`, a LangChain `BaseRetriever` (`corpus.retrieve()`
+  wraps it and returns plain dicts).
+
+## Build or update the index (inside Docker)
+
+```cmd
+docker compose run --rm indexer
 ```
 
-## Run the app
+This runs `python corpus.py index` in a container with `data/policies/` mounted read-only and `index/` writable.
+The build is **incremental**: each PDF is fingerprinted (SHA-256); unchanged documents keep their vectors, and only
+chunks of new or changed documents are embedded and added (stale vectors are removed by ID). After a build,
+`index/manifest.json` records the build time, model, chunk/document counts, chunks embedded in that run and throughput.
+The worker exposes these as Prometheus metrics (`corpus_index_built_timestamp_seconds`, `corpus_index_chunks`,
+`corpus_index_last_build_embedded_chunks`, `corpus_index_build_throughput_chunks_per_second`, …).
 
-For Docker Compose, set `CORPUS_BACKEND=faiss` in `.env` after building the index, then start or rebuild the stack:
+Restart the worker afterwards so it loads the new index: `docker compose restart worker`.
 
-```powershell
-docker compose up --build
-```
+Running on the host also works (`pip install -r requirements.txt` then `python corpus.py index`), and
+`python corpus.py search "Limitations as to Use" --section-type limitation` is a quick check.
 
-Compose mounts `index/` read-only into the worker. The worker loads the MiniLM model into a named Docker volume during
-startup, so the first start needs internet access and may take a while. Once healthy, jobs reuse the loaded FAISS
-index and model. Rebuild the index on the host and recreate the worker to load changed policy files.
+## Evaluation labels
 
-For running the Python app directly on the host, set `CORPUS_BACKEND=faiss` in `.env` and run the app from the
-project directory. The host needs the dependencies in `requirements.txt` as well as `requirements-app.txt`.
-
-The evaluation labels in `eval/scenarios.json` have been updated to match the indexed ICICI Lombard corpus quotes.
+`eval/scenarios.json` cites clause IDs from this corpus (for example `SECTION-I-LOSS-OF-OR-DAMAGE-TO-THE-VEHICLE-INSURED`,
+`LIMITATIONS-AS-TO-USE`, `GENERAL-EXCEPTIONS`). If you change the chunker or the documents, re-check that every
+`must_cite` ID still exists in `index/chunks.jsonl` and every `support` quote is still found in it.

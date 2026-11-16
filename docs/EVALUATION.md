@@ -14,10 +14,9 @@ This file contains **no results**. The harness prints and saves the numbers when
 third party); the scripted stub cannot pass these, a real model might. They are reported separately so the number you quote
 is honest.
 
-**Important: the default evaluation labels still refer to the sample corpus.** Build the FAISS index as described in
-[`CORPUS.md`](CORPUS.md), then update each scenario's `support` quotes, `must_cite` clause ids, and expected outcomes to
-match the selected policy. At Evaluation 1 the brief wants the real passages the section 4.1 case depends on; update at
-least `S02`-`S06` before treating scores as real-policy results.
+The labels in `eval/scenarios.json` refer to the ICICI Lombard corpus in `data/policies/` (see
+[`CORPUS.md`](CORPUS.md)): `must_cite` clause IDs exist in `index/chunks.jsonl` and every `support` quote is found in
+the cited clause. If the documents or chunker change, re-check them before quoting scores.
 
 ## 1. Setup
 
@@ -85,7 +84,7 @@ Report all four before and after, state how each is computed (point at `eval/met
 
 Tips: LLM output varies, so for a defensible claim run each side 2-3 times (different `--label`s) and look at the spread
 before you attribute a difference to the change. The most informative changes for this brief are the ones that affect
-whether the restriction (e.g. `LIM-USE-1`) is retrieved: look at `context_recall` and `S02`.
+whether the restriction (e.g. `LIMITATIONS-AS-TO-USE`) is retrieved: look at `context_recall` and `S02`.
 
 To exercise the verifier on purpose (demo item 6) with the stub: `--set STUB_MODE=hallucinate` makes the scripted model cite a
 non-existent clause on its first attempt; `hallucination_rate_draft` goes up and `_returned` should stay 0.

@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import time
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -21,6 +22,7 @@ PDF_DIR = Path(os.getenv("POLICY_PDF_DIR", str(ROOT / "data" / "policies")))
 INDEX_DIR = Path(os.getenv("CORPUS_INDEX_DIR", str(ROOT / "index")))
 META_PATH = INDEX_DIR / "chunks.jsonl"
 STATE_PATH = INDEX_DIR / "documents.json"
+MANIFEST_PATH = INDEX_DIR / "manifest.json"
 FAISS_PATH = INDEX_DIR / "corpus.faiss"
 
 MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
@@ -49,8 +51,9 @@ HEADING_RE = re.compile(
     r"|[A-Z][A-Z0-9 &/,()'–-]{4,100})\s*$"
 )
 
+# Page furniture: page numbers ("-3-", "-3"), the UIN footer (with or without page number / CIN) and a bare CIN line.
 NOISE_LINE_RE = re.compile(
-    r"^\s*(?:-\d+-|UIN:\s*IRDAN\S+(?:\s+-\d+-\s+CIN:\s*\S+|\s+CIN:\s*\S+)?)\s*$"
+    r"^\s*(?:-?\d{1,3}-?(?:\s+CIN:\s*\S+)?|UIN:\s*IRDAN\S+.*|CIN:\s*\S+)\s*$"
 )
 
 CLAUSE_RE = re.compile(
@@ -94,7 +97,9 @@ def detect_type(heading: str, text: str) -> str:
         x in s
         for x in (
             "exclusion",
+            "general exception",
             "not liable",
+            "not be liable",
             "will not cover",
             "shall not cover",
             "excluded",
@@ -173,9 +178,41 @@ def extract_refs(text: str) -> list[str]:
     return refs
 
 
+def _column_text(page) -> str:
+    """One pdfplumber page in reading order: the left column, then the right one.
+
+    The policy wording is printed in two columns. Reading straight across the page interleaves them, which put
+    General Exception 3(a) inside the Personal Accident chunk. A page counts as two-column when almost no word
+    crosses the vertical centre line and both halves hold a real share of the words."""
+    words = page.extract_words()
+    if not words:
+        return ""
+    mid = page.width / 2
+    crossing = sum(1 for w in words if w["x0"] < mid - 4 and w["x1"] > mid + 4)
+    left = sum(1 for w in words if w["x1"] <= mid + 4)
+    right = sum(1 for w in words if w["x0"] >= mid - 4)
+    if crossing <= 0.03 * len(words) and left > 0.2 * len(words) and right > 0.2 * len(words):
+        return "\n".join(
+            page.crop(box).extract_text() or ""
+            for box in ((0, 0, mid, page.height), (mid, 0, page.width, page.height))
+        )
+    return page.extract_text() or ""
+
+
+def _open_plumber(path: Path):
+    """pdfplumber handle for column-aware reading, or None (then plain pypdf text is used)."""
+    try:
+        import pdfplumber
+    except ImportError:
+        print("WARNING: pdfplumber not installed; two-column pages will be read straight across")
+        return None
+    return pdfplumber.open(str(path))
+
+
 def parse_pdf(path: Path) -> list[dict[str, Any]]:
     """Extract PDF text into section-aware chunks."""
     reader = PdfReader(str(path))
+    plumber = _open_plumber(path)
 
     chunks: list[dict[str, Any]] = []
     current_heading = "Introduction"
@@ -221,7 +258,7 @@ def parse_pdf(path: Path) -> list[dict[str, Any]]:
         current_lines = []
 
     for page_num, page in enumerate(reader.pages, start=1):
-        raw = page.extract_text() or ""
+        raw = (_column_text(plumber.pages[page_num - 1]) if plumber else "") or page.extract_text() or ""
 
         lines = [
             re.sub(r"\s+", " ", line).strip()
@@ -280,6 +317,8 @@ def parse_pdf(path: Path) -> list[dict[str, Any]]:
                 current_lines.append(line)
 
     flush()
+    if plumber:
+        plumber.close()
 
     # Avoid duplicate IDs caused by repeated headings.
     seen: dict[str, int] = {}
@@ -291,7 +330,47 @@ def parse_pdf(path: Path) -> list[dict[str, Any]]:
         if seen[base] > 1:
             chunk["clause_id"] = f"{base}-{seen[base]}"
 
-    return chunks
+    return [part for chunk in chunks for part in _split_long(chunk)]
+
+
+# all-MiniLM-L6-v2 reads at most 256 word pieces (roughly 1,000-1,200 characters of policy text); anything after
+# that is silently cut from the embedding. Clauses longer than this are split into parts at sentence boundaries,
+# each part repeating the previous part's last sentence (a small overlap) and keeping the clause's heading and type.
+# Bump when parsing/chunking changes: documents indexed by an older parser are re-parsed even if the PDF is unchanged.
+PARSER_VERSION = "2-columns-850"
+CHUNK_MAX_CHARS = int(os.getenv("CHUNK_MAX_CHARS", "850"))
+_SENTENCE_END = re.compile(r"(?<=[.;:])\s+(?=[(\[A-Za-z0-9])")
+
+
+def _split_long(chunk: dict[str, Any]) -> list[dict[str, Any]]:
+    """Split one over-long clause into parts of at most CHUNK_MAX_CHARS. IDs: <id>, <id>-PART2, <id>-PART3 ..."""
+    text = chunk["text"]
+    if len(text) <= CHUNK_MAX_CHARS:
+        return [chunk]
+
+    pieces: list[str] = []
+    for sentence in _SENTENCE_END.split(text):
+        while len(sentence) > CHUNK_MAX_CHARS:  # a single very long sentence: cut at a space
+            cut = sentence.rfind(" ", 0, CHUNK_MAX_CHARS) or CHUNK_MAX_CHARS
+            pieces.append(sentence[:cut])
+            sentence = sentence[cut:].lstrip()
+        pieces.append(sentence)
+
+    parts: list[list[str]] = [[]]
+    for piece in pieces:
+        if parts[-1] and len(" ".join(parts[-1] + [piece])) > CHUNK_MAX_CHARS:
+            overlap = parts[-1][-1] if len(parts[-1][-1]) <= 200 else ""
+            parts.append([overlap] if overlap else [])
+        parts[-1].append(piece)
+
+    out = []
+    for i, words in enumerate(parts, start=1):
+        part = dict(chunk)
+        part["text"] = " ".join(words).strip()
+        part["clause_id"] = chunk["clause_id"] if i == 1 else f"{chunk['clause_id']}-PART{i}"
+        part["part"], part["parts"], part["parent_id"] = i, len(parts), chunk["clause_id"]
+        out.append(part)
+    return out
 
 
 def load_chunks() -> list[dict[str, Any]]:
@@ -348,6 +427,7 @@ def build_index(document: Path | None = None) -> None:
     INDEX_DIR.mkdir(parents=True, exist_ok=True)
 
     existing = load_chunks()
+    previous_vec_ids = {c["vec_id"] for c in existing if "vec_id" in c}
     state = load_state()
 
     if document is not None:
@@ -398,7 +478,7 @@ def build_index(document: Path | None = None) -> None:
 
         previous = state.get(pdf.name, {})
 
-        if previous.get("sha256") == digest:
+        if previous.get("sha256") == digest and previous.get("parser_version") == PARSER_VERSION:
             print(f"SKIP unchanged: {pdf.name}")
             continue
 
@@ -428,6 +508,7 @@ def build_index(document: Path | None = None) -> None:
                 timezone.utc
             ).isoformat(),
             "model": MODEL_NAME,
+            "parser_version": PARSER_VERSION,
         }
 
         changed_docs.append(pdf.name)
@@ -458,26 +539,64 @@ def build_index(document: Path | None = None) -> None:
         print("No documents remain. The index has been cleared.")
         return
 
-    print("Generating embeddings...")
+    # Incremental re-embedding (L1). Vectors sit in a FAISS IndexIDMap2 keyed by each chunk's vec_id, so when a
+    # document changes only its old vectors are removed and only its new chunks are embedded. Unchanged documents
+    # keep their vectors. An index written by an older version (no IDs) is rebuilt in full once.
+    index, mode = None, "full"
+    kept = [c for c in existing if "vec_id" in c]
+    if FAISS_PATH.exists() and kept:
+        try:
+            candidate = faiss.read_index(str(FAISS_PATH))
+        except Exception:
+            candidate = None
+        if candidate is not None and type(candidate).__name__.startswith("IndexIDMap"):
+            index, mode = candidate, "incremental"
+            stale = sorted(previous_vec_ids - {c["vec_id"] for c in kept})
+            if stale:
+                index.remove_ids(np.asarray(stale, dtype="int64"))
+    if index is None:
+        for chunk in existing:
+            chunk.pop("vec_id", None)
 
-    model = SentenceTransformer(MODEL_NAME)
+    to_embed = [c for c in existing if "vec_id" not in c]
+    next_id = max((c["vec_id"] for c in existing if "vec_id" in c), default=-1) + 1
+    for offset, chunk in enumerate(to_embed):
+        chunk["vec_id"] = next_id + offset
 
-    texts = [
-        f"{chunk['section']}\n{chunk['text']}"
-        for chunk in existing
-    ]
+    started = time.perf_counter()
+    model = None
+    if to_embed or index is None:
+        print(f"Generating embeddings for {len(to_embed)} chunk(s) ({mode})...")
+        model = SentenceTransformer(MODEL_NAME)
+    if index is None:
+        index = faiss.IndexIDMap2(faiss.IndexFlatIP(model.get_sentence_embedding_dimension()))
+    if to_embed:
+        vectors = model.encode(
+            [f"{chunk['section']}\n{chunk['text']}" for chunk in to_embed],
+            normalize_embeddings=True,
+            show_progress_bar=True,
+            convert_to_numpy=True,
+        )
+        index.add_with_ids(np.asarray(vectors, dtype="float32"),
+                           np.asarray([c["vec_id"] for c in to_embed], dtype="int64"))
+    elapsed = time.perf_counter() - started
 
-    vectors = model.encode(
-        texts,
-        normalize_embeddings=True,
-        show_progress_bar=True,
-        convert_to_numpy=True,
-    )
+    if index.ntotal != len(existing):
+        raise SystemExit(f"Index has {index.ntotal} vectors but {len(existing)} chunks; "
+                         "delete index/ and run `python corpus.py index` to rebuild.")
 
-    vectors = np.asarray(vectors, dtype="float32")
-
-    index = faiss.IndexFlatIP(vectors.shape[1])
-    index.add(vectors)
+    # Data freshness and pipeline throughput (D2): exported as Prometheus metrics by app/metrics.py.
+    MANIFEST_PATH.write_text(json.dumps({
+        "built_at_utc": datetime.now(timezone.utc).isoformat(),
+        "model": MODEL_NAME,
+        "mode": mode,
+        "documents": len(state),
+        "chunks": len(existing),
+        "embedded_this_run": len(to_embed),
+        "embedding_seconds": round(elapsed, 3),
+        "throughput_chunks_per_second": round(len(to_embed) / elapsed, 2) if to_embed and elapsed > 0 else None,
+        "versions": {name: meta.get("sha256", "")[:12] for name, meta in sorted(state.items())},
+    }, indent=2), encoding="utf-8")
 
     faiss.write_index(index, str(FAISS_PATH))
     save_chunks(existing)
@@ -525,7 +644,9 @@ def _load_search_assets():
             "Run `python corpus.py index` to rebuild."
         )
 
-    return index, chunks, model
+    # FAISS returns vec_ids (IndexIDMap2) or, for an index built by an older version, row positions.
+    by_id = {c["vec_id"]: c for c in chunks if "vec_id" in c} or dict(enumerate(chunks))
+    return index, chunks, model, by_id
 
 
 def warm_search_assets() -> None:
@@ -542,7 +663,7 @@ def search_corpus(
     if not query.strip() or k < 1:
         return []
 
-    index, chunks, model = _load_search_assets()
+    index, chunks, model, by_id = _load_search_assets()
 
     if not chunks:
         return []
@@ -586,7 +707,9 @@ def search_corpus(
         if chunk_id < 0:
             continue
 
-        item = dict(chunks[int(chunk_id)])
+        if int(chunk_id) not in by_id:
+            continue
+        item = dict(by_id[int(chunk_id)])
 
         if section_type and item.get("section_type") != section_type:
             continue
@@ -628,9 +751,15 @@ def get_clause(clause_id: str) -> dict[str, Any] | None:
     chunks = load_chunks()
     query = clause_id.strip().casefold()
 
-    # Preserve exact clause-ID lookup.
+    # Exact clause-ID lookup. A clause split into parts is returned whole (all parts joined), so following a
+    # reference always yields the complete clause.
     for item in chunks:
         if item.get("clause_id", "").casefold() == query:
+            parent = item.get("parent_id", item["clause_id"])
+            parts = [c for c in chunks if c.get("parent_id", c["clause_id"]) == parent]
+            if len(parts) > 1:
+                item = dict(parts[0], clause_id=parent,
+                            text=" ".join(c["text"] for c in sorted(parts, key=lambda c: c.get("part", 1))))
             item["score"] = 1.0
             return item
 
@@ -669,6 +798,41 @@ def get_clause(clause_id: str) -> dict[str, Any] | None:
 
     candidates[0]["score"] = 1.0
     return candidates[0]
+
+
+# ---- L1: the same retrieval exposed as a LangChain retriever ----
+# The agents call retrieval through this class, so the RAG layer runs on a framework abstraction
+# (langchain-core's BaseRetriever) while ranking stays in search_corpus above.
+try:
+    from langchain_core.callbacks import CallbackManagerForRetrieverRun
+    from langchain_core.documents import Document
+    from langchain_core.retrievers import BaseRetriever
+
+    class PolicyClauseRetriever(BaseRetriever):
+        """LangChain retriever over the FAISS policy index. Each Document is one clause chunk;
+        its metadata carries clause_id, section, section_type, source_doc, page, refs and score."""
+
+        k: int = 5
+        section_type: str | None = None
+
+        def _get_relevant_documents(
+            self, query: str, *, run_manager: CallbackManagerForRetrieverRun
+        ) -> list[Document]:
+            hits = search_corpus(query, k=self.k, section_type=self.section_type)
+            return [
+                Document(page_content=h["text"], metadata={key: v for key, v in h.items() if key != "text"})
+                for h in hits
+            ]
+except ImportError:  # corpus.py still works standalone without langchain-core
+    PolicyClauseRetriever = None
+
+
+def retrieve(query: str, k: int = 5, section_type: str | None = None) -> list[dict[str, Any]]:
+    """Run a query through the LangChain retriever and return plain dicts (same shape as search_corpus)."""
+    if PolicyClauseRetriever is None:
+        return search_corpus(query, k=k, section_type=section_type)
+    docs = PolicyClauseRetriever(k=k, section_type=section_type).invoke(query)
+    return [{**d.metadata, "text": d.page_content} for d in docs]
 
 
 def get_fnol_field(field_name: str) -> dict[str, str] | None:

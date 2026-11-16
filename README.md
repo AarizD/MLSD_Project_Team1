@@ -11,9 +11,9 @@ A production multi-agent service for motor insurance First Notice of Loss (FNOL)
 - **Ingestion API & Web UI (`app/main.py`, `app/schemas.py`, `web/`)**: FastAPI service with schema/cross-field validation at the ingestion boundary, malformed record quarantine, per-client rate limiting, run caching, and a feedback endpoint.
 - **Async Queue & Workers (`app/rq_worker.py`, `app/worker.py`)**: Redis + RQ decouples submission (`POST /claims` → `202` with `run_id`) from execution (`GET /runs/{run_id}`). Supports horizontal scaling (`--scale worker=3`).
 - **Multi-Agent Reasoning (`app/agents.py`)**: LangGraph workflow (`guardrail → triage → coverage ↔ tool_call → verifier → finalize`) with bounded steps/tool calls/wall-clock time, retries with exponential backoff, and a circuit breaker.
-- **Policy Corpus & RAG (`corpus.py`, `data/policies/`, `index/`)**: Section-aware PDF chunking (`pypdf`) + local `sentence-transformers/all-MiniLM-L6-v2` embeddings + FAISS index (`199` chunks across 3 ICICI Lombard Private Car documents).
+- **Policy Corpus & RAG (`corpus.py`, `data/policies/`, `index/`)**: Column-aware PDF extraction (`pdfplumber`/`pypdf`), structure-aware chunking capped at 850 characters, local `sentence-transformers/all-MiniLM-L6-v2` embeddings, FAISS cosine index with incremental re-embedding (`324` chunks: the ICICI Lombard Private Car Package Policy plus two team-prepared transcriptions), exposed to the agents as a LangChain retriever.
 - **Guardrails (`app/guardrails.py`)**: Prompt-injection defense on free-text inputs, toxicity detection on input/output, and output filtering.
-- **Observability (`observability/`, `app/metrics.py`, `app/tracing.py`)**: Structured JSON logs with `run_id`, OpenTelemetry traces exported to **Jaeger**, **Prometheus** scraping API + scaled workers, and a pre-provisioned **Grafana** dashboard.
+- **Observability (`observability/`, `app/metrics.py`, `app/tracing.py`)**: Structured JSON logs with `run_id`, OpenTelemetry exporter to **Jaeger** configured (agent spans not yet instrumented), **Prometheus** scraping API + scaled workers, and a pre-provisioned **Grafana** dashboard.
 
 ---
 
